@@ -1,0 +1,10 @@
+{
+  "name": "memomo",
+  "version": "0.2.0",
+  "description": "Local AI integrated knowledge search engine MVP (Node.js)",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  }
+}

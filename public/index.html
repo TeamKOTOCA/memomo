@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>memomo quick UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; max-width: 900px; }
+    textarea, input { width: 100%; margin-top: 8px; }
+    textarea { min-height: 120px; }
+    button { margin-top: 8px; margin-right: 8px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
+    .muted { color: #666; font-size: 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  </style>
+</head>
+<body>
+  <h1>memomo</h1>
+  <p class="muted">ローカルLLM連携・高速メモ作成UI</p>
+
+  <div class="row">
+    <section>
+      <h2>クイックメモ</h2>
+      <label>内容</label>
+      <textarea id="memoContent" placeholder="すぐ残したいメモを入力"></textarea>
+      <label>タグ（カンマ区切り、空ならAI生成）</label>
+      <input id="memoTags" placeholder="ai, sqlite, idea" />
+      <div>
+        <button id="aiTagBtn">AIタグ提案</button>
+        <button id="saveBtn">保存</button>
+      </div>
+      <pre id="saveResult"></pre>
+    </section>
+
+    <section>
+      <h2>検索</h2>
+      <label>クエリ</label>
+      <input id="query" placeholder="例: sqlite" />
+      <label>タグ絞り込み（任意、カンマ区切り）</label>
+      <input id="filterTags" placeholder="ai, search" />
+      <button id="searchBtn">検索</button>
+      <p><strong>要約:</strong> <span id="summary"></span></p>
+      <div id="results"></div>
+    </section>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
