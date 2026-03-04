@@ -19,7 +19,7 @@ export function nowTs() {
 function normalizeFolders(folders = []) {
   return [...new Set(
     folders
-      .map((path) => String(path).trim().replace(/^\/+|\/+$/g, '').toLowerCase())
+      .map((folderPath) => String(folderPath).trim().replace(/^\/+|\/+$/g, '').toLowerCase())
       .filter(Boolean),
   )].slice(0, 20);
 }
@@ -108,10 +108,7 @@ function replaceNoteFolders(noteId, paths = []) {
 
   if (normalized.length) {
     const values = normalized
-      .map((folderPath) => `(
-        ${sqlQuote(noteId)},
-        (SELECT id FROM folders WHERE path = ${sqlQuote(folderPath)} LIMIT 1)
-      )`)
+      .map((folderPath) => `(${sqlQuote(noteId)}, (SELECT id FROM folders WHERE path = ${sqlQuote(folderPath)} LIMIT 1))`)
       .join(',');
 
     runSql(`
@@ -144,16 +141,7 @@ export function createNote({ title, content, folders = [], deviceId = 'web-ui' }
 
   runSql(`
     INSERT INTO notes (id, title, content, version, created_at, updated_at, is_deleted, device_id)
-    VALUES (
-      ${sqlQuote(id)},
-      ${sqlQuote(title)},
-      ${sqlQuote(content)},
-      ${version},
-      ${ts},
-      ${ts},
-      0,
-      ${sqlQuote(deviceId)}
-    );
+    VALUES (${sqlQuote(id)}, ${sqlQuote(title)}, ${sqlQuote(content)}, ${version}, ${ts}, ${ts}, 0, ${sqlQuote(deviceId)});
 
     INSERT INTO note_versions (id, note_id, version, content, created_at)
     VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(id)}, ${version}, ${sqlQuote(content)}, ${ts});
@@ -165,12 +153,7 @@ export function createNote({ title, content, folders = [], deviceId = 'web-ui' }
 
 export function updateNote({ id, title, content, version, folders = [], deviceId = 'web-ui' }) {
   const raw = runSql(`
-    SELECT json_object(
-      'id', id,
-      'title', title,
-      'content', content,
-      'version', version
-    )
+    SELECT json_object('id', id, 'title', title, 'content', content, 'version', version)
     FROM notes
     WHERE id = ${sqlQuote(id)} AND is_deleted = 0;
   `).trim();
@@ -185,15 +168,7 @@ export function updateNote({ id, title, content, version, folders = [], deviceId
   if (baseVersion !== currentVersion) {
     runSql(`
       INSERT INTO note_conflicts (id, note_id, base_version, local_content, remote_content, created_at, resolved)
-      VALUES (
-        ${sqlQuote(crypto.randomUUID())},
-        ${sqlQuote(id)},
-        ${baseVersion},
-        ${sqlQuote(content)},
-        ${sqlQuote(existing.content)},
-        ${ts},
-        0
-      );
+      VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(id)}, ${baseVersion}, ${sqlQuote(content)}, ${sqlQuote(existing.content)}, ${ts}, 0);
     `);
 
     return {
@@ -205,13 +180,7 @@ export function updateNote({ id, title, content, version, folders = [], deviceId
 
   runSql(`
     INSERT INTO note_versions (id, note_id, version, content, created_at)
-    VALUES (
-      ${sqlQuote(crypto.randomUUID())},
-      ${sqlQuote(id)},
-      ${currentVersion},
-      ${sqlQuote(existing.content)},
-      ${ts}
-    );
+    VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(id)}, ${currentVersion}, ${sqlQuote(existing.content)}, ${ts});
   `);
 
   const nextVersion = currentVersion + 1;
@@ -227,6 +196,63 @@ export function updateNote({ id, title, content, version, folders = [], deviceId
 
   const savedFolders = replaceNoteFolders(id, folders);
   return { status: 'updated', id, version: nextVersion, folders: savedFolders };
+}
+
+export function logicalDeleteNote(id) {
+  const raw = runSql(`
+    SELECT json_object('id', id, 'content', content, 'version', version)
+    FROM notes
+    WHERE id = ${sqlQuote(id)} AND is_deleted = 0;
+  `).trim();
+
+  if (!raw) return { status: 'not_found' };
+
+  const existing = JSON.parse(raw);
+  const ts = nowTs();
+
+  runSql(`
+    INSERT INTO note_versions (id, note_id, version, content, created_at)
+    VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(id)}, ${Number(existing.version)}, ${sqlQuote(existing.content)}, ${ts});
+
+    UPDATE notes
+    SET is_deleted = 1,
+        updated_at = ${ts}
+    WHERE id = ${sqlQuote(id)};
+  `);
+
+  return { status: 'deleted', id };
+}
+
+export function listConflicts({ resolved = 0 } = {}) {
+  const raw = runSql(`
+    SELECT COALESCE(json_group_array(json_object(
+      'id', x.id,
+      'note_id', x.note_id,
+      'base_version', x.base_version,
+      'local_content', x.local_content,
+      'remote_content', x.remote_content,
+      'created_at', x.created_at,
+      'resolved', x.resolved
+    )), '[]')
+    FROM (
+      SELECT id, note_id, base_version, local_content, remote_content, created_at, resolved
+      FROM note_conflicts
+      WHERE resolved = ${Number(resolved) ? 1 : 0}
+      ORDER BY created_at DESC
+      LIMIT 200
+    ) x;
+  `).trim();
+  return JSON.parse(raw || '[]');
+}
+
+export function resolveConflict(id) {
+  runSql(`UPDATE note_conflicts SET resolved = 1 WHERE id = ${sqlQuote(id)};`);
+  return { status: 'resolved', id };
+}
+
+export function vacuumDb() {
+  runSql('VACUUM;');
+  return { status: 'ok' };
 }
 
 export function getNote(id) {

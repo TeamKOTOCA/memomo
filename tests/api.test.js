@@ -7,7 +7,7 @@ function setupDb() {
   process.env.MEMOMO_DB_PATH = path.join(os.tmpdir(), `memomo-api-${Date.now()}-${Math.random()}.sqlite`);
 }
 
-test('HTTP API memo flows + ai search', async (t) => {
+test('HTTP API memo flows + ai search + conflict + delete', async (t) => {
   setupDb();
   const { createServer } = await import(`../src/server.js?${Date.now()}`);
   const server = createServer();
@@ -21,6 +21,9 @@ test('HTTP API memo flows + ai search', async (t) => {
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Markdown/);
+
+  const manifest = await fetch(`${base}/manifest.json`);
+  assert.equal(manifest.status, 200);
 
   const createRes = await fetch(`${base}/notes`, {
     method: 'POST',
@@ -69,6 +72,14 @@ test('HTTP API memo flows + ai search', async (t) => {
   });
   assert.equal(conflictRes.status, 409);
 
+  const conflictListRes = await fetch(`${base}/conflicts`);
+  assert.equal(conflictListRes.status, 200);
+  const conflictList = await conflictListRes.json();
+  assert.equal(conflictList.conflicts.length, 1);
+
+  const resolveRes = await fetch(`${base}/conflicts/${conflictList.conflicts[0].id}/resolve`, { method: 'POST' });
+  assert.equal(resolveRes.status, 200);
+
   const searchRes = await fetch(`${base}/search?q=updated`);
   assert.equal(searchRes.status, 200);
 
@@ -80,4 +91,13 @@ test('HTTP API memo flows + ai search', async (t) => {
   assert.equal(aiSearch.status, 200);
   const aiBody = await aiSearch.json();
   assert.ok(typeof aiBody.summary === 'string');
+
+  const deleteRes = await fetch(`${base}/notes/${created.id}`, { method: 'DELETE' });
+  assert.equal(deleteRes.status, 200);
+
+  const noteAfterDelete = await fetch(`${base}/notes/${created.id}`);
+  assert.equal(noteAfterDelete.status, 404);
+
+  const vacuumRes = await fetch(`${base}/admin/vacuum`, { method: 'POST' });
+  assert.equal(vacuumRes.status, 200);
 });
