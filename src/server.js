@@ -1,10 +1,17 @@
 import http from 'node:http';
 import { URL } from 'node:url';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getNote, initDb, searchNotes, upsertNote } from './db.js';
+import {
+  createNote,
+  getNote,
+  initDb,
+  listFolders,
+  listNotes,
+  searchNotes,
+  updateNote,
+} from './db.js';
 import { suggestTags, summarizeResults } from './llm.js';
 
 const port = Number(process.env.PORT || 3000);
@@ -29,10 +36,16 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function parseTags(input) {
+function parseFolders(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
   if (typeof input === 'string') return input.split(',').map((x) => x.trim()).filter(Boolean);
+  return [];
+}
+
+function parseHierarchicalTags(body = {}, query = null) {
+  if (body && (body.folders || body.tags)) return parseFolders(body.folders || body.tags);
+  if (query && (query.get('folders') || query.get('tags'))) return parseFolders(query.get('folders') || query.get('tags'));
   return [];
 }
 
@@ -53,68 +66,87 @@ export function createServer() {
         return sendJson(res, 200, { status: 'ok' });
       }
 
-      if (req.method === 'POST' && url.pathname === '/ai/tags') {
-        const body = await readBody(req);
-        if (typeof body.content !== 'string' || !body.content.trim()) {
-          return sendJson(res, 400, { error: 'content is required' });
-        }
-        return sendJson(res, 200, { tags: suggestTags(body.content) });
+      if (req.method === 'GET' && (url.pathname === '/api/notes' || url.pathname === '/notes')) {
+        const folder = url.searchParams.get('folder') || '';
+        return sendJson(res, 200, { notes: listNotes({ folder }) });
       }
 
-      if (req.method === 'POST' && url.pathname === '/quick-memo') {
-        const body = await readBody(req);
-        if (typeof body.content !== 'string' || !body.content.trim()) {
-          return sendJson(res, 400, { error: 'content is required' });
-        }
-        const memoId = body.id || crypto.randomUUID();
-        const tags = parseTags(body.tags);
-        const result = upsertNote({
-          noteId: memoId,
-          content: body.content,
-          baseVersion: Number(body.version ?? 0),
-          deviceId: body.device_id || 'web-ui',
-          tags: tags.length ? tags : suggestTags(body.content),
-        });
-        return sendJson(res, 200, result);
-      }
-
-      if (req.method === 'POST' && url.pathname === '/notes') {
-        const body = await readBody(req);
-        if (!body.id || typeof body.content !== 'string' || typeof body.version !== 'number' || !body.device_id) {
-          return sendJson(res, 400, { error: 'invalid payload' });
-        }
-
-        const result = upsertNote({
-          noteId: body.id,
-          content: body.content,
-          baseVersion: body.version,
-          deviceId: body.device_id,
-          tags: parseTags(body.tags),
-        });
-        return sendJson(res, 200, result);
-      }
-
-      if (req.method === 'GET' && url.pathname.startsWith('/notes/')) {
-        const noteId = decodeURIComponent(url.pathname.replace('/notes/', ''));
+      if (req.method === 'GET' && (url.pathname.startsWith('/api/notes/') || url.pathname.startsWith('/notes/'))) {
+        const noteId = decodeURIComponent(url.pathname.replace('/api/notes/', '').replace('/notes/', ''));
         const note = getNote(noteId);
-        if (!note) return sendJson(res, 404, { detail: 'note not found' });
+        if (!note) return sendJson(res, 404, { error: 'not_found' });
         return sendJson(res, 200, note);
       }
 
-      if (req.method === 'GET' && url.pathname === '/search') {
+      if (req.method === 'POST' && (url.pathname === '/api/notes' || url.pathname === '/notes')) {
+        const body = await readBody(req);
+        if (typeof body.title !== 'string' || typeof body.content !== 'string') {
+          return sendJson(res, 400, { error: 'title and content are required' });
+        }
+
+        const result = createNote({
+          title: body.title.trim() || 'Untitled',
+          content: body.content,
+          folders: parseHierarchicalTags(body),
+          deviceId: body.device_id || 'web-ui',
+        });
+
+        return sendJson(res, 201, result);
+      }
+
+      if (req.method === 'PUT' && (url.pathname.startsWith('/api/notes/') || url.pathname.startsWith('/notes/'))) {
+        const noteId = decodeURIComponent(url.pathname.replace('/api/notes/', '').replace('/notes/', ''));
+        const body = await readBody(req);
+        if (typeof body.title !== 'string' || typeof body.content !== 'string' || typeof body.version !== 'number') {
+          return sendJson(res, 400, { error: 'title, content and version are required' });
+        }
+
+        const result = updateNote({
+          id: noteId,
+          title: body.title,
+          content: body.content,
+          version: body.version,
+          folders: parseHierarchicalTags(body),
+          deviceId: body.device_id || 'web-ui',
+        });
+
+        if (result.status === 'not_found') return sendJson(res, 404, { error: 'not_found' });
+        if (result.status === 'conflict') {
+          return sendJson(res, 409, {
+            error: 'VERSION_CONFLICT',
+            server_version: result.server_version,
+            server_content: result.server_content,
+          });
+        }
+        return sendJson(res, 200, result);
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/folders') {
+        return sendJson(res, 200, { folders: listFolders() });
+      }
+
+      if (req.method === 'GET' && (url.pathname === '/api/search' || url.pathname === '/search')) {
         const q = url.searchParams.get('q');
         if (!q) return sendJson(res, 400, { error: 'q is required' });
-        const tags = parseTags(url.searchParams.get('tags'));
-        const rows = searchNotes(q, { limit: 5, tags });
-        const hits = rows.map((row) => ({
-          id: row.id,
-          version: row.version,
-          updated_at: row.updated_at,
-          tags: row.tags || [],
-          content_preview: row.content.slice(0, 120),
+        const hits = searchNotes(q, { limit: 10 }).map((row) => ({
+          ...row,
+          content_preview: row.content.slice(0, 140),
         }));
-        const summary = summarizeResults(q, rows.map((r) => r.content));
-        return sendJson(res, 200, { hits, summary });
+        return sendJson(res, 200, { hits });
+      }
+
+      if (req.method === 'POST' && (url.pathname === '/api/ai-search' || url.pathname === '/ai-search')) {
+        const body = await readBody(req);
+        if (typeof body.query !== 'string' || !body.query.trim()) {
+          return sendJson(res, 400, { error: 'query is required' });
+        }
+        const keywords = suggestTags(body.query).join(' OR ') || body.query;
+        const rows = searchNotes(keywords, { limit: 5 });
+        return sendJson(res, 200, {
+          keywords,
+          hits: rows.map((x) => ({ id: x.id, title: x.title, content_preview: x.content.slice(0, 140) })),
+          summary: summarizeResults(body.query, rows.map((x) => x.content)),
+        });
       }
 
       return sendJson(res, 404, { error: 'not found' });

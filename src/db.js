@@ -16,8 +16,12 @@ export function nowTs() {
   return Math.floor(Date.now() / 1000);
 }
 
-export function hashContent(content) {
-  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+function normalizeFolders(folders = []) {
+  return [...new Set(
+    folders
+      .map((path) => String(path).trim().replace(/^\/+|\/+$/g, '').toLowerCase())
+      .filter(Boolean),
+  )].slice(0, 20);
 }
 
 export function initDb() {
@@ -26,20 +30,35 @@ export function initDb() {
 
     CREATE TABLE IF NOT EXISTS notes (
       id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
       content TEXT NOT NULL,
-      content_hash TEXT NOT NULL,
       version INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
+      is_deleted INTEGER DEFAULT 0,
       device_id TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS note_versions (
       id TEXT PRIMARY KEY,
       note_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
       content TEXT NOT NULL,
-      content_hash TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       FOREIGN KEY(note_id) REFERENCES notes(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY,
+      path TEXT UNIQUE NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS note_folders (
+      note_id TEXT NOT NULL,
+      folder_id TEXT NOT NULL,
+      UNIQUE(note_id, folder_id),
+      FOREIGN KEY(note_id) REFERENCES notes(id),
+      FOREIGN KEY(folder_id) REFERENCES folders(id)
     );
 
     CREATE TABLE IF NOT EXISTS note_conflicts (
@@ -49,177 +68,268 @@ export function initDb() {
       local_content TEXT NOT NULL,
       remote_content TEXT NOT NULL,
       created_at INTEGER NOT NULL,
+      resolved INTEGER DEFAULT 0,
       FOREIGN KEY(note_id) REFERENCES notes(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS note_tags (
-      note_id TEXT NOT NULL,
-      tag TEXT NOT NULL,
-      UNIQUE(note_id, tag),
-      FOREIGN KEY(note_id) REFERENCES notes(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS assets_meta (
-      id TEXT PRIMARY KEY,
-      path TEXT NOT NULL,
-      type TEXT NOT NULL,
-      size INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
-    USING fts5(content, content='notes', content_rowid='rowid');
+    USING fts5(title, content, content='notes', content_rowid='rowid');
 
     CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
-      INSERT INTO notes_fts(rowid, content) VALUES (new.rowid, new.content);
+      INSERT INTO notes_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
     END;
 
     CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
-      INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+      INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.rowid, old.title, old.content);
     END;
 
     CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
-      INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-      INSERT INTO notes_fts(rowid, content) VALUES (new.rowid, new.content);
+      INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.rowid, old.title, old.content);
+      INSERT INTO notes_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
     END;
   `);
 }
 
-function normalizeTags(tags = []) {
-  return [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))].slice(0, 8);
-}
-
-export function replaceNoteTags(noteId, tags = []) {
-  const normalized = normalizeTags(tags);
-  const values = normalized.map((tag) => `(${sqlQuote(noteId)}, ${sqlQuote(tag)})`).join(', ');
-  runSql(`DELETE FROM note_tags WHERE note_id = ${sqlQuote(noteId)};`);
-  if (values) {
-    runSql(`INSERT INTO note_tags (note_id, tag) VALUES ${values};`);
+function ensureFolders(paths = []) {
+  const normalized = normalizeFolders(paths);
+  for (const folderPath of normalized) {
+    runSql(`
+      INSERT INTO folders (id, path)
+      VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(folderPath)})
+      ON CONFLICT(path) DO NOTHING;
+    `);
   }
   return normalized;
 }
 
-export function getNote(noteId) {
-  const noteRaw = runSql(`
-    SELECT json_object(
-      'id', id,
-      'content', content,
-      'content_hash', content_hash,
-      'version', version,
-      'updated_at', updated_at,
-      'device_id', device_id
-    )
-    FROM notes
-    WHERE id = ${sqlQuote(noteId)};
-  `).trim();
+function replaceNoteFolders(noteId, paths = []) {
+  const normalized = ensureFolders(paths);
+  runSql(`DELETE FROM note_folders WHERE note_id = ${sqlQuote(noteId)};`);
 
-  if (!noteRaw) return null;
-  const note = JSON.parse(noteRaw);
+  if (normalized.length) {
+    const values = normalized
+      .map((folderPath) => `(
+        ${sqlQuote(noteId)},
+        (SELECT id FROM folders WHERE path = ${sqlQuote(folderPath)} LIMIT 1)
+      )`)
+      .join(',');
 
-  const tagsRaw = runSql(`
-    SELECT json_group_array(tag)
-    FROM note_tags
-    WHERE note_id = ${sqlQuote(noteId)};
-  `).trim();
-  note.tags = tagsRaw ? (JSON.parse(tagsRaw) || []) : [];
-  return note;
+    runSql(`
+      INSERT OR IGNORE INTO note_folders (note_id, folder_id)
+      VALUES ${values};
+    `);
+  }
+
+  return normalized;
 }
 
-export function upsertNote({ noteId, content, baseVersion, deviceId, tags = [] }) {
-  const existingRaw = runSql(`SELECT json_object('id', id, 'content', content, 'version', version) FROM notes WHERE id = ${sqlQuote(noteId)};`).trim();
-  const existing = existingRaw ? JSON.parse(existingRaw) : null;
+function getFoldersByNoteId(noteId) {
+  const raw = runSql(`
+    SELECT COALESCE(json_group_array(path), '[]')
+    FROM (
+      SELECT f.path
+      FROM note_folders nf
+      JOIN folders f ON f.id = nf.folder_id
+      WHERE nf.note_id = ${sqlQuote(noteId)}
+      ORDER BY f.path
+    );
+  `).trim();
+  return JSON.parse(raw || '[]');
+}
 
-  const contentHash = hashContent(content);
+export function createNote({ title, content, folders = [], deviceId = 'web-ui' }) {
+  const id = crypto.randomUUID();
+  const ts = nowTs();
+  const version = 1;
+
+  runSql(`
+    INSERT INTO notes (id, title, content, version, created_at, updated_at, is_deleted, device_id)
+    VALUES (
+      ${sqlQuote(id)},
+      ${sqlQuote(title)},
+      ${sqlQuote(content)},
+      ${version},
+      ${ts},
+      ${ts},
+      0,
+      ${sqlQuote(deviceId)}
+    );
+
+    INSERT INTO note_versions (id, note_id, version, content, created_at)
+    VALUES (${sqlQuote(crypto.randomUUID())}, ${sqlQuote(id)}, ${version}, ${sqlQuote(content)}, ${ts});
+  `);
+
+  const savedFolders = replaceNoteFolders(id, folders);
+  return { id, version, folders: savedFolders };
+}
+
+export function updateNote({ id, title, content, version, folders = [], deviceId = 'web-ui' }) {
+  const raw = runSql(`
+    SELECT json_object(
+      'id', id,
+      'title', title,
+      'content', content,
+      'version', version
+    )
+    FROM notes
+    WHERE id = ${sqlQuote(id)} AND is_deleted = 0;
+  `).trim();
+
+  if (!raw) return { status: 'not_found' };
+
+  const existing = JSON.parse(raw);
+  const currentVersion = Number(existing.version);
+  const baseVersion = Number(version);
   const ts = nowTs();
 
-  if (!existing) {
-    const version = 1;
-    const versionId = crypto.randomUUID();
+  if (baseVersion !== currentVersion) {
     runSql(`
-      INSERT INTO notes (id, content, content_hash, version, updated_at, device_id)
-      VALUES (${sqlQuote(noteId)}, ${sqlQuote(content)}, ${sqlQuote(contentHash)}, ${version}, ${ts}, ${sqlQuote(deviceId)});
-
-      INSERT INTO note_versions (id, note_id, content, content_hash, created_at)
-      VALUES (${sqlQuote(versionId)}, ${sqlQuote(noteId)}, ${sqlQuote(content)}, ${sqlQuote(contentHash)}, ${ts});
-    `);
-    const savedTags = replaceNoteTags(noteId, tags);
-    return { status: 'updated', id: noteId, version, tags: savedTags };
-  }
-
-  const currentVersion = Number(existing.version);
-  if (currentVersion !== Number(baseVersion)) {
-    const conflictId = crypto.randomUUID();
-    runSql(`
-      INSERT INTO note_conflicts (id, note_id, base_version, local_content, remote_content, created_at)
+      INSERT INTO note_conflicts (id, note_id, base_version, local_content, remote_content, created_at, resolved)
       VALUES (
-        ${sqlQuote(conflictId)},
-        ${sqlQuote(noteId)},
-        ${Number(baseVersion)},
+        ${sqlQuote(crypto.randomUUID())},
+        ${sqlQuote(id)},
+        ${baseVersion},
         ${sqlQuote(content)},
         ${sqlQuote(existing.content)},
-        ${ts}
+        ${ts},
+        0
       );
     `);
-    return { status: 'conflict', id: noteId, current_version: currentVersion };
+
+    return {
+      status: 'conflict',
+      server_version: currentVersion,
+      server_content: existing.content,
+    };
   }
 
+  runSql(`
+    INSERT INTO note_versions (id, note_id, version, content, created_at)
+    VALUES (
+      ${sqlQuote(crypto.randomUUID())},
+      ${sqlQuote(id)},
+      ${currentVersion},
+      ${sqlQuote(existing.content)},
+      ${ts}
+    );
+  `);
+
   const nextVersion = currentVersion + 1;
-  const versionId = crypto.randomUUID();
   runSql(`
     UPDATE notes
-    SET content = ${sqlQuote(content)},
-        content_hash = ${sqlQuote(contentHash)},
+    SET title = ${sqlQuote(title)},
+        content = ${sqlQuote(content)},
         version = ${nextVersion},
         updated_at = ${ts},
         device_id = ${sqlQuote(deviceId)}
-    WHERE id = ${sqlQuote(noteId)};
-
-    INSERT INTO note_versions (id, note_id, content, content_hash, created_at)
-    VALUES (${sqlQuote(versionId)}, ${sqlQuote(noteId)}, ${sqlQuote(content)}, ${sqlQuote(contentHash)}, ${ts});
+    WHERE id = ${sqlQuote(id)};
   `);
 
-  const savedTags = replaceNoteTags(noteId, tags);
-  return { status: 'updated', id: noteId, version: nextVersion, tags: savedTags };
+  const savedFolders = replaceNoteFolders(id, folders);
+  return { status: 'updated', id, version: nextVersion, folders: savedFolders };
 }
 
-export function searchNotes(query, { limit = 5, tags = [] } = {}) {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 20));
-  const normalizedTags = normalizeTags(tags);
+export function getNote(id) {
+  const raw = runSql(`
+    SELECT json_object(
+      'id', id,
+      'title', title,
+      'content', content,
+      'version', version,
+      'created_at', created_at,
+      'updated_at', updated_at
+    )
+    FROM notes
+    WHERE id = ${sqlQuote(id)} AND is_deleted = 0;
+  `).trim();
 
-  const tagFilter = normalizedTags.length
+  if (!raw) return null;
+  const note = JSON.parse(raw);
+  note.folders = getFoldersByNoteId(id);
+  return note;
+}
+
+export function listNotes({ folder = '', limit = 100 } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 300));
+  const hasFolder = typeof folder === 'string' && folder.trim();
+  const prefix = hasFolder ? folder.trim().replace(/^\/+|\/+$/g, '').toLowerCase() : '';
+
+  const filter = hasFolder
     ? `AND EXISTS (
-        SELECT 1 FROM note_tags nt
-        WHERE nt.note_id = n.id
-          AND nt.tag IN (${normalizedTags.map(sqlQuote).join(', ')})
+        SELECT 1
+        FROM note_folders nf
+        JOIN folders f ON f.id = nf.folder_id
+        WHERE nf.note_id = n.id
+          AND f.path LIKE ${sqlQuote(`${prefix}%`)}
       )`
     : '';
 
-  const sql = `
-    SELECT json_group_array(
-      json_object(
-        'id', x.id,
-        'content', x.content,
-        'version', x.version,
-        'updated_at', x.updated_at,
-        'tags', COALESCE((
-          SELECT json_group_array(tag)
-          FROM note_tags t
-          WHERE t.note_id = x.id
-        ), json('[]'))
-      )
-    )
+  const raw = runSql(`
+    SELECT COALESCE(json_group_array(json_object(
+      'id', x.id,
+      'title', x.title,
+      'content_preview', x.content_preview,
+      'version', x.version,
+      'updated_at', x.updated_at,
+      'folders', x.folders
+    )), '[]')
     FROM (
-      SELECT n.id, n.content, n.version, n.updated_at
+      SELECT
+        n.id,
+        n.title,
+        substr(n.content, 1, 140) AS content_preview,
+        n.version,
+        n.updated_at,
+        COALESCE((
+          SELECT json_group_array(path)
+          FROM (
+            SELECT f.path
+            FROM note_folders nf2
+            JOIN folders f ON f.id = nf2.folder_id
+            WHERE nf2.note_id = n.id
+            ORDER BY f.path
+          )
+        ), json('[]')) AS folders
+      FROM notes n
+      WHERE n.is_deleted = 0
+      ${filter}
+      ORDER BY n.updated_at DESC
+      LIMIT ${safeLimit}
+    ) x;
+  `).trim();
+
+  return JSON.parse(raw || '[]');
+}
+
+export function listFolders() {
+  const raw = runSql(`
+    SELECT COALESCE(json_group_array(path), '[]')
+    FROM (
+      SELECT path FROM folders ORDER BY path
+    );
+  `).trim();
+  return JSON.parse(raw || '[]');
+}
+
+export function searchNotes(query, { limit = 10 } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 30));
+  const raw = runSql(`
+    SELECT COALESCE(json_group_array(json_object(
+      'id', x.id,
+      'title', x.title,
+      'content', x.content,
+      'version', x.version,
+      'updated_at', x.updated_at
+    )), '[]')
+    FROM (
+      SELECT n.id, n.title, n.content, n.version, n.updated_at
       FROM notes_fts f
       JOIN notes n ON n.rowid = f.rowid
       WHERE notes_fts MATCH ${sqlQuote(query)}
-      ${tagFilter}
+        AND n.is_deleted = 0
       ORDER BY rank
       LIMIT ${safeLimit}
     ) x;
-  `;
-
-  const raw = runSql(sql).trim();
-  if (!raw) return [];
-  return JSON.parse(raw) || [];
+  `).trim();
+  return JSON.parse(raw || '[]');
 }

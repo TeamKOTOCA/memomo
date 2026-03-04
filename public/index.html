@@ -3,45 +3,121 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>memomo quick UI</title>
+  <title>memomo - live markdown</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 24px; max-width: 900px; }
-    textarea, input { width: 100%; margin-top: 8px; }
-    textarea { min-height: 120px; }
-    button { margin-top: 8px; margin-right: 8px; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
-    .muted { color: #666; font-size: 12px; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; }
+
+    .layout { display: grid; grid-template-columns: 62px 300px 1fr; min-height: 100vh; }
+    .iconbar { border-right: 1px solid #999; padding: 8px 6px; display: flex; flex-direction: column; gap: 8px; }
+    .icon-btn { border: 1px solid #999; border-radius: 10px; background: transparent; height: 44px; font-size: 20px; cursor: pointer; }
+    .icon-btn.active { border-color: #2d7ef7; background: #2d7ef722; }
+
+    .sidebar { border-right: 1px solid #999; padding: 14px; overflow: auto; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .main { padding: 16px; overflow: auto; }
+    input, textarea, select { width: 100%; padding: 9px; border: 1px solid #999; border-radius: 8px; margin-top: 6px; margin-bottom: 10px; }
+    button { border: 1px solid #999; border-radius: 8px; padding: 8px 12px; background: transparent; cursor: pointer; }
+    button.primary { background: #2d7ef7; color: #fff; border-color: #2d7ef7; }
+
+    .toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .muted { font-size: 12px; opacity: 0.75; }
+    .card { border: 1px solid #999; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+
+    #editor {
+      border: 1px solid #999;
+      border-radius: 10px;
+      min-height: 62vh;
+      padding: 12px;
+      outline: none;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+
+    .line-h1 { font-size: 1.8rem; font-weight: 700; }
+    .line-h2 { font-size: 1.45rem; font-weight: 700; }
+    .line-h3 { font-size: 1.2rem; font-weight: 700; }
+    .line-list { padding-left: 10px; }
+    .line-code { font-family: ui-monospace, monospace; background: #00000018; border-radius: 6px; padding: 2px 6px; display: inline-block; }
+
+    .note-btn { width: 100%; text-align: left; margin-bottom: 8px; }
+    .note-btn.active { border-color: #2d7ef7; background: #2d7ef722; }
+    .asset-preview { max-width: 100%; border-radius: 8px; border: 1px solid #999; }
   </style>
 </head>
 <body>
-  <h1>memomo</h1>
-  <p class="muted">ローカルLLM連携・高速メモ作成UI</p>
+  <div class="layout">
+    <nav class="iconbar">
+      <button class="icon-btn active" data-panel="new" title="新規メモ">📝</button>
+      <button class="icon-btn" data-panel="search" title="検索">🔎</button>
+      <button class="icon-btn" data-panel="other" title="その他">📦</button>
+      <button class="icon-btn" data-panel="assets" title="アセットストレージ">🗂️</button>
+      <button class="icon-btn" data-panel="settings" title="設定">⚙️</button>
+    </nav>
 
-  <div class="row">
-    <section>
-      <h2>クイックメモ</h2>
-      <label>内容</label>
-      <textarea id="memoContent" placeholder="すぐ残したいメモを入力"></textarea>
-      <label>タグ（カンマ区切り、空ならAI生成）</label>
-      <input id="memoTags" placeholder="ai, sqlite, idea" />
-      <div>
-        <button id="aiTagBtn">AIタグ提案</button>
-        <button id="saveBtn">保存</button>
+    <aside class="sidebar">
+      <section class="panel active" data-panel="new">
+        <h3>新規メモ / 一覧</h3>
+        <button id="newBtn" class="primary">新規メモを作成</button>
+        <label class="muted">階層タグで絞り込み</label>
+        <input id="folderFilter" placeholder="例: project/memomo" />
+        <div id="noteList"></div>
+      </section>
+
+      <section class="panel" data-panel="search">
+        <h3>検索</h3>
+        <input id="query" placeholder="キーワード検索" />
+        <button id="searchBtn">検索</button>
+        <div id="searchResult"></div>
+      </section>
+
+      <section class="panel" data-panel="other">
+        <h3>その他</h3>
+        <p class="muted">AI検索（検索補助のみ）</p>
+        <input id="aiQuery" placeholder="自然言語で検索" />
+        <button id="aiSearchBtn">AI検索</button>
+        <p id="aiSummary" class="muted"></p>
+      </section>
+
+      <section class="panel" data-panel="assets">
+        <h3>アセットストレージ</h3>
+        <p class="muted">貼り付けた画像/ファイルを保存し、再挿入できます。</p>
+        <div id="assetList"></div>
+      </section>
+
+      <section class="panel" data-panel="settings">
+        <h3>設定</h3>
+        <label class="muted">自動保存（秒）</label>
+        <select id="autosaveSec">
+          <option value="0">オフ</option>
+          <option value="3" selected>3</option>
+          <option value="5">5</option>
+          <option value="10">10</option>
+        </select>
+        <button id="vacuumBtn">VACUUM実行（通知のみ）</button>
+        <p id="settingsStatus" class="muted"></p>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <button id="saveBtn" class="primary">保存</button>
+        <span class="muted">Markdown ライブ適用（Notion風）</span>
       </div>
-      <pre id="saveResult"></pre>
-    </section>
 
-    <section>
-      <h2>検索</h2>
-      <label>クエリ</label>
-      <input id="query" placeholder="例: sqlite" />
-      <label>タグ絞り込み（任意、カンマ区切り）</label>
-      <input id="filterTags" placeholder="ai, search" />
-      <button id="searchBtn">検索</button>
-      <p><strong>要約:</strong> <span id="summary"></span></p>
-      <div id="results"></div>
-    </section>
+      <label>タイトル</label>
+      <input id="title" placeholder="タイトル" />
+
+      <label>階層タグ（folder/tag）</label>
+      <input id="folders" placeholder="例: project/memomo/spec, diary/2026/03" />
+
+      <label>本文 (Markdown)</label>
+      <div id="editor" contenteditable="true" spellcheck="false"></div>
+      <p id="status" class="muted"></p>
+    </main>
   </div>
 
   <script type="module" src="/app.js"></script>

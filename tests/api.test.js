@@ -7,7 +7,7 @@ function setupDb() {
   process.env.MEMOMO_DB_PATH = path.join(os.tmpdir(), `memomo-api-${Date.now()}-${Math.random()}.sqlite`);
 }
 
-test('HTTP API quick memo + ai tags + search + web ui', async (t) => {
+test('HTTP API memo flows + ai search', async (t) => {
   setupDb();
   const { createServer } = await import(`../src/server.js?${Date.now()}`);
   const server = createServer();
@@ -20,29 +20,64 @@ test('HTTP API quick memo + ai tags + search + web ui', async (t) => {
 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /memomo/);
+  assert.match(await page.text(), /Markdown/);
 
-  const tagsRes = await fetch(`${base}/ai/tags`, {
+  const createRes = await fetch(`${base}/notes`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ content: 'Node sqlite FTS local memo ideas' }),
+    body: JSON.stringify({
+      title: 'Node memo',
+      content: 'Node sqlite FTS local memo ideas',
+      tags: ['project/memomo/spec'],
+      device_id: 'dev-a',
+    }),
   });
-  assert.equal(tagsRes.status, 200);
-  const tagsBody = await tagsRes.json();
-  assert.ok(Array.isArray(tagsBody.tags));
+  assert.equal(createRes.status, 201);
+  const created = await createRes.json();
 
-  const save = await fetch(`${base}/quick-memo`, {
+  const listRes = await fetch(`${base}/notes?folder=project/memomo`);
+  assert.equal(listRes.status, 200);
+  const listed = await listRes.json();
+  assert.equal(listed.notes.length, 1);
+
+  const noteRes = await fetch(`${base}/notes/${created.id}`);
+  const note = await noteRes.json();
+
+  const updateRes = await fetch(`${base}/notes/${created.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'Node memo v2',
+      content: 'updated content',
+      version: note.version,
+      tags: ['project/memomo/spec'],
+      device_id: 'dev-a',
+    }),
+  });
+  assert.equal(updateRes.status, 200);
+
+  const conflictRes = await fetch(`${base}/notes/${created.id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'stale',
+      content: 'stale content',
+      version: 1,
+      tags: [],
+      device_id: 'dev-b',
+    }),
+  });
+  assert.equal(conflictRes.status, 409);
+
+  const searchRes = await fetch(`${base}/search?q=updated`);
+  assert.equal(searchRes.status, 200);
+
+  const aiSearch = await fetch(`${base}/ai-search`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ content: 'node sqlite search', tags: ['node', 'sqlite'], device_id: 'dev-a' }),
+    body: JSON.stringify({ query: 'sqlite のメモ' }),
   });
-  assert.equal(save.status, 200);
-  const saveJson = await save.json();
-  assert.equal(saveJson.status, 'updated');
-
-  const search = await fetch(`${base}/search?q=sqlite&tags=node`);
-  assert.equal(search.status, 200);
-  const searchJson = await search.json();
-  assert.equal(searchJson.hits.length, 1);
-  assert.equal(searchJson.hits[0].id, saveJson.id);
+  assert.equal(aiSearch.status, 200);
+  const aiBody = await aiSearch.json();
+  assert.ok(typeof aiBody.summary === 'string');
 });
