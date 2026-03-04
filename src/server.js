@@ -7,10 +7,14 @@ import {
   createNote,
   getNote,
   initDb,
+  listConflicts,
   listFolders,
   listNotes,
+  logicalDeleteNote,
+  resolveConflict,
   searchNotes,
   updateNote,
+  vacuumDb,
 } from './db.js';
 import { suggestTags, summarizeResults } from './llm.js';
 
@@ -27,6 +31,14 @@ function sendFile(res, filePath, contentType) {
   const body = fs.readFileSync(filePath);
   res.writeHead(200, { 'Content-Type': contentType });
   res.end(body);
+}
+
+function contentTypeByExt(filePath) {
+  if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (filePath.endsWith('.png')) return 'image/png';
+  return 'text/plain; charset=utf-8';
 }
 
 async function readBody(req) {
@@ -51,6 +63,19 @@ function parseHierarchicalTags(body = {}, query = null) {
 
 export function createServer() {
   initDb();
+
+  const vacuumHours = Number(process.env.MEMOMO_VACUUM_HOURS || 24);
+  if (vacuumHours > 0) {
+    setInterval(() => {
+      try {
+        vacuumDb();
+        console.log(`[VACUUM] completed at ${new Date().toISOString()}`);
+      } catch (error) {
+        console.error('[VACUUM] failed', error.message);
+      }
+    }, vacuumHours * 60 * 60 * 1000).unref();
+  }
+
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -58,8 +83,10 @@ export function createServer() {
       if (req.method === 'GET' && url.pathname === '/') {
         return sendFile(res, path.join(PUBLIC_DIR, 'index.html'), 'text/html; charset=utf-8');
       }
-      if (req.method === 'GET' && url.pathname === '/app.js') {
-        return sendFile(res, path.join(PUBLIC_DIR, 'app.js'), 'application/javascript; charset=utf-8');
+
+      if (req.method === 'GET' && (url.pathname === '/app.js' || url.pathname === '/sw.js' || url.pathname === '/manifest.json')) {
+        const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\//, ''));
+        return sendFile(res, filePath, contentTypeByExt(filePath));
       }
 
       if (req.method === 'GET' && url.pathname === '/health') {
@@ -121,6 +148,13 @@ export function createServer() {
         return sendJson(res, 200, result);
       }
 
+      if (req.method === 'DELETE' && (url.pathname.startsWith('/api/notes/') || url.pathname.startsWith('/notes/'))) {
+        const noteId = decodeURIComponent(url.pathname.replace('/api/notes/', '').replace('/notes/', ''));
+        const result = logicalDeleteNote(noteId);
+        if (result.status === 'not_found') return sendJson(res, 404, { error: 'not_found' });
+        return sendJson(res, 200, result);
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/folders') {
         return sendJson(res, 200, { folders: listFolders() });
       }
@@ -147,6 +181,21 @@ export function createServer() {
           hits: rows.map((x) => ({ id: x.id, title: x.title, content_preview: x.content.slice(0, 140) })),
           summary: summarizeResults(body.query, rows.map((x) => x.content)),
         });
+      }
+
+      if (req.method === 'GET' && (url.pathname === '/api/conflicts' || url.pathname === '/conflicts')) {
+        const resolved = Number(url.searchParams.get('resolved') || 0);
+        return sendJson(res, 200, { conflicts: listConflicts({ resolved }) });
+      }
+
+      if (req.method === 'POST' && (url.pathname.startsWith('/api/conflicts/') || url.pathname.startsWith('/conflicts/')) && url.pathname.endsWith('/resolve')) {
+        const conflictId = decodeURIComponent(url.pathname.replace('/api/conflicts/', '').replace('/conflicts/', '').replace('/resolve', ''));
+        return sendJson(res, 200, resolveConflict(conflictId));
+      }
+
+      if (req.method === 'POST' && (url.pathname === '/api/admin/vacuum' || url.pathname === '/admin/vacuum')) {
+        vacuumDb();
+        return sendJson(res, 200, { status: 'ok' });
       }
 
       return sendJson(res, 404, { error: 'not found' });

@@ -10,7 +10,7 @@ function prepareDb() {
   return dbPath;
 }
 
-test('create/update/search/folder filter/conflict behavior', async () => {
+test('create/update/search/folder filter/conflict/logical delete behavior', async () => {
   const dbPath = prepareDb();
   const db = await import(`../src/db.js?${Date.now()}`);
   db.initDb();
@@ -52,9 +52,18 @@ test('create/update/search/folder filter/conflict behavior', async () => {
   assert.equal(conflict.status, 'conflict');
   assert.equal(conflict.server_version, 2);
 
+  const conflicts = db.listConflicts({ resolved: 0 });
+  assert.equal(conflicts.length, 1);
+  db.resolveConflict(conflicts[0].id);
+  assert.equal(db.listConflicts({ resolved: 0 }).length, 0);
+
   const hits = db.searchNotes('version');
   assert.equal(hits.length, 1);
   assert.equal(hits[0].id, created.id);
+
+  const deleted = db.logicalDeleteNote(created.id);
+  assert.equal(deleted.status, 'deleted');
+  assert.equal(db.getNote(created.id), null);
 
   fs.rmSync(dbPath, { force: true });
 });
