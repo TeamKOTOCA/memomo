@@ -14,6 +14,7 @@
 - [x] temporary ID → server ID の参照更新処理を追加（pendingキューとメタ情報キー再マップ）
 - [x] Service Worker + IndexedDB（`notes_cache` / `pending_updates` / `conflicts_local`）を実装
 - [x] PWAマニフェスト/Service Worker導線とオフライン検索フォールバックを追加
+- [x] API入力バリデーション強化（schema/長さ制限/フォルダ制約）
 
 ## next (今後実装すべきタスク)
 - [ ] Notion相当のブロック管理（ドラッグ並べ替え、ブロック選択、/コマンドUIの本格化）
@@ -27,7 +28,6 @@
 - [ ] オフライン検索ranking改善（軽量インデックス）
 - [ ] PWAキャッシュversioningと古いcache掃除
 - [ ] AI検索の根拠表示と安全制御（トークン上限/監査ログ）
-- [ ] API入力バリデーション強化（schema/長さ制限/フォルダ制約）
 - [ ] セキュリティ強化（CSP/CSRF/rate limit/監査ログ）
 - [ ] 5万件データ性能ベンチと継続計測（FTS<500ms、保存<200ms）
 - [ ] Reactクライアントへの段階移行（状態管理・コンポーネント分割）

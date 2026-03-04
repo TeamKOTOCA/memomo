@@ -101,3 +101,40 @@ test('HTTP API memo flows + ai search + conflict + delete', async (t) => {
   const vacuumRes = await fetch(`${base}/admin/vacuum`, { method: 'POST' });
   assert.equal(vacuumRes.status, 200);
 });
+
+test('HTTP API validates note payload and query limits', async (t) => {
+  setupDb();
+  const { createServer } = await import(`../src/server.js?${Date.now()}`);
+  const server = createServer();
+
+  await new Promise((resolve) => server.listen(0, resolve));
+  t.after(() => server.close());
+
+  const addr = server.address();
+  const base = `http://127.0.0.1:${addr.port}`;
+
+  const invalidFolderRes = await fetch(`${base}/notes`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'ok',
+      content: 'ok',
+      folders: ['project//memomo'],
+    }),
+  });
+  assert.equal(invalidFolderRes.status, 400);
+
+  const invalidVersionRes = await fetch(`${base}/notes/non-existent`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'x',
+      content: 'x',
+      version: 1.5,
+    }),
+  });
+  assert.equal(invalidVersionRes.status, 400);
+
+  const longQueryRes = await fetch(`${base}/search?q=${'x'.repeat(201)}`);
+  assert.equal(longQueryRes.status, 400);
+});

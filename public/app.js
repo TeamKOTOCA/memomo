@@ -32,6 +32,9 @@ let autosaveTimer = null;
 let markdownSource = '';
 let folderTreeState = {};
 let latestFolderTree = { name: '', path: '', children: {} };
+let selectedBlocks = new Set();
+let dragSourceIndex = null;
+let slashState = { items: [], activeIndex: 0, lineIndex: -1, keyword: '' };
 
 const DB_NAME = 'memomo_offline_v1';
 const DB_VERSION = 1;
@@ -80,20 +83,35 @@ function initTheme() {
 function closeSlashMenu() {
   slashMenuEl.classList.remove('open');
   slashMenuEl.innerHTML = '';
+  slashState = { items: [], activeIndex: 0, lineIndex: -1, keyword: '' };
 }
 
-function showSlashMenu() {
-  const rect = editorEl.getBoundingClientRect();
-  slashMenuEl.style.left = `${Math.min(rect.left + 14, window.innerWidth - 240)}px`;
-  slashMenuEl.style.top = `${Math.min(rect.top + 80, window.innerHeight - 220)}px`;
+function showSlashMenu(keyword = '') {
+  const items = SLASH_COMMANDS.filter((cmd) => cmd.label.includes(keyword) || cmd.key.includes(keyword));
+  if (!items.length) {
+    closeSlashMenu();
+    return;
+  }
+  slashState.items = items;
+  slashState.activeIndex = Math.min(slashState.activeIndex, items.length - 1);
+
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+  const rect = range?.getBoundingClientRect?.();
+  const fallback = editorEl.getBoundingClientRect();
+  const left = rect?.left || fallback.left + 14;
+  const top = rect?.bottom || fallback.top + 80;
+  slashMenuEl.style.left = `${Math.min(left, window.innerWidth - 240)}px`;
+  slashMenuEl.style.top = `${Math.min(top + 6, window.innerHeight - 220)}px`;
   slashMenuEl.innerHTML = '';
 
-  for (const cmd of SLASH_COMMANDS) {
+  for (const [index, cmd] of items.entries()) {
     const btn = document.createElement('button');
     btn.className = 'slash-item';
+    btn.classList.toggle('active', index === slashState.activeIndex);
     btn.textContent = cmd.label;
     btn.addEventListener('click', () => {
-      insertWritingTemplate(cmd.key);
+      applySlashCommand(cmd.key);
       closeSlashMenu();
     });
     slashMenuEl.appendChild(btn);
@@ -191,16 +209,22 @@ async function request(url, options = {}) {
   return data;
 }
 
+function lineClass(line) {
+  if (line.startsWith('### ')) return 'line-h3';
+  if (line.startsWith('## ')) return 'line-h2';
+  if (line.startsWith('# ')) return 'line-h1';
+  if (/^\s*[-*]\s+/.test(line)) return 'line-list';
+  return '';
+}
+
 function renderLiveMarkdown(source) {
   const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return escaped.split(/\r?\n/).map((line) => {
-    if (line.startsWith('### ')) return `<div class="line-h3">${line}</div>`;
-    if (line.startsWith('## ')) return `<div class="line-h2">${line}</div>`;
-    if (line.startsWith('# ')) return `<div class="line-h1">${line}</div>`;
-    if (/^\s*[-*]\s+/.test(line)) return `<div class="line-list">${line}</div>`;
-    if (/^\s*`.+`\s*$/.test(line)) return `<div><span class="line-code">${line}</span></div>`;
-    if (!line.trim()) return '<div><br /></div>';
-    return `<div>${line}</div>`;
+  return escaped.split(/\r?\n/).map((line, index) => {
+    const cls = lineClass(line);
+    const selected = selectedBlocks.has(index) ? ' selected' : '';
+    if (/^\s*`.+`\s*$/.test(line)) return `<div class="block-line ${cls}${selected}" draggable="true" data-block-index="${index}"><span class="line-code">${line}</span></div>`;
+    if (!line.trim()) return `<div class="block-line${selected}" draggable="true" data-block-index="${index}"><br /></div>`;
+    return `<div class="block-line ${cls}${selected}" draggable="true" data-block-index="${index}">${line}</div>`;
   }).join('');
 }
 
@@ -217,6 +241,87 @@ function syncEditorFromMarkdown(moveCaretToEnd = false) {
 
 function readEditorToMarkdown() {
   markdownSource = editorEl.innerText.replace(/\u00a0/g, '');
+}
+
+function getMarkdownLines() {
+  return markdownSource.replace(/\r/g, '').split('\n');
+}
+
+function setMarkdownLines(lines) {
+  markdownSource = lines.join('\n');
+  syncEditorFromMarkdown(true);
+}
+
+function getCaretLineIndex() {
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return -1;
+  let node = selection.getRangeAt(0).startContainer;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+  const line = node?.closest?.('.block-line');
+  return line ? Number(line.dataset.blockIndex) : -1;
+}
+
+function applySlashCommand(key) {
+  const lineIndex = slashState.lineIndex >= 0 ? slashState.lineIndex : getCaretLineIndex();
+  const lines = getMarkdownLines();
+  if (lineIndex < 0 || lineIndex >= lines.length) {
+    insertWritingTemplate(key);
+    return;
+  }
+  const templates = {
+    h1: '# 見出し',
+    h2: '## セクション',
+    list: '- 項目',
+    check: '- [ ] TODO',
+    quote: '> 引用',
+    table: '| col1 | col2 |\n|---|---|\n| a | b |',
+    divider: '---',
+  };
+  const replacement = templates[key] || '';
+  const replaced = replacement.split('\n');
+  lines.splice(lineIndex, 1, ...replaced);
+  setMarkdownLines(lines);
+  scheduleAutosave();
+}
+
+function handleBlockSelection(index, event) {
+  if (event.shiftKey && selectedBlocks.size) {
+    const sorted = [...selectedBlocks].sort((a, b) => a - b);
+    const anchor = sorted[sorted.length - 1];
+    selectedBlocks = new Set();
+    const [start, end] = [Math.min(anchor, index), Math.max(anchor, index)];
+    for (let i = start; i <= end; i += 1) selectedBlocks.add(i);
+  } else if (event.metaKey || event.ctrlKey) {
+    if (selectedBlocks.has(index)) selectedBlocks.delete(index);
+    else selectedBlocks.add(index);
+  } else {
+    selectedBlocks = new Set([index]);
+  }
+  syncEditorFromMarkdown(false);
+}
+
+function moveSelectedBlocks(direction = 1) {
+  const lines = getMarkdownLines();
+  const selected = [...selectedBlocks].sort((a, b) => a - b);
+  if (!selected.length) return;
+  if (direction > 0 && selected[selected.length - 1] >= lines.length - 1) return;
+  if (direction < 0 && selected[0] <= 0) return;
+
+  if (direction > 0) {
+    for (let i = selected.length - 1; i >= 0; i -= 1) {
+      const idx = selected[i];
+      [lines[idx], lines[idx + 1]] = [lines[idx + 1], lines[idx]];
+    }
+    selectedBlocks = new Set(selected.map((x) => x + 1));
+  } else {
+    for (let i = 0; i < selected.length; i += 1) {
+      const idx = selected[i];
+      [lines[idx - 1], lines[idx]] = [lines[idx], lines[idx - 1]];
+    }
+    selectedBlocks = new Set(selected.map((x) => x - 1));
+  }
+  setMarkdownLines(lines);
+  scheduleAutosave();
 }
 
 function keepSelectionInEditor() {
@@ -548,6 +653,7 @@ function clearEditor() {
   titleEl.value = '';
   foldersEl.value = '';
   markdownSource = '';
+  selectedBlocks = new Set();
   syncEditorFromMarkdown();
   loadMetaToForm(null);
   updateStatus('新規メモモード');
@@ -853,11 +959,93 @@ async function registerPwa() {
 
 editorEl.addEventListener('input', () => {
   readEditorToMarkdown();
+  selectedBlocks = new Set();
   syncEditorFromMarkdown(true);
   scheduleAutosave();
-  const tail = markdownSource.slice(-2);
-  if (tail.endsWith('/')) showSlashMenu();
-  else closeSlashMenu();
+  const lineIndex = getCaretLineIndex();
+  const lines = getMarkdownLines();
+  const current = lines[lineIndex] || '';
+  const slashMatch = current.match(/^\/(.*)$/);
+  if (slashMatch) {
+    slashState.lineIndex = lineIndex;
+    slashState.keyword = (slashMatch[1] || '').trim();
+    showSlashMenu(slashState.keyword);
+  } else closeSlashMenu();
+});
+
+editorEl.addEventListener('click', (event) => {
+  const line = event.target.closest('.block-line');
+  if (!line) return;
+  handleBlockSelection(Number(line.dataset.blockIndex), event);
+});
+
+editorEl.addEventListener('dragstart', (event) => {
+  const line = event.target.closest('.block-line');
+  if (!line) return;
+  dragSourceIndex = Number(line.dataset.blockIndex);
+  event.dataTransfer.effectAllowed = 'move';
+});
+
+editorEl.addEventListener('dragover', (event) => {
+  if (dragSourceIndex === null) return;
+  event.preventDefault();
+});
+
+editorEl.addEventListener('drop', (event) => {
+  if (dragSourceIndex === null) return;
+  event.preventDefault();
+  const targetLine = event.target.closest('.block-line');
+  if (!targetLine) return;
+  const targetIndex = Number(targetLine.dataset.blockIndex);
+  if (Number.isNaN(targetIndex) || targetIndex === dragSourceIndex) return;
+  const lines = getMarkdownLines();
+  const [moved] = lines.splice(dragSourceIndex, 1);
+  lines.splice(targetIndex, 0, moved);
+  selectedBlocks = new Set([targetIndex]);
+  dragSourceIndex = null;
+  setMarkdownLines(lines);
+  scheduleAutosave();
+});
+
+editorEl.addEventListener('dragend', () => {
+  dragSourceIndex = null;
+});
+
+editorEl.addEventListener('keydown', (event) => {
+  if (slashMenuEl.classList.contains('open')) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      slashState.activeIndex = (slashState.activeIndex + 1) % slashState.items.length;
+      showSlashMenu(slashState.keyword);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      slashState.activeIndex = (slashState.activeIndex - 1 + slashState.items.length) % slashState.items.length;
+      showSlashMenu(slashState.keyword);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applySlashCommand(slashState.items[slashState.activeIndex].key);
+      closeSlashMenu();
+      return;
+    }
+    if (event.key === 'Escape') {
+      closeSlashMenu();
+      return;
+    }
+  }
+
+  if ((event.altKey || event.metaKey) && event.shiftKey && event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveSelectedBlocks(-1);
+  }
+
+  if ((event.altKey || event.metaKey) && event.shiftKey && event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveSelectedBlocks(1);
+  }
 });
 
 editorEl.addEventListener('paste', async (event) => {
