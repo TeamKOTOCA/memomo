@@ -21,6 +21,11 @@ import { suggestTags, summarizeResults } from './llm.js';
 const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const MAX_TITLE_LENGTH = 200;
+const MAX_CONTENT_LENGTH = 200_000;
+const MAX_SEARCH_QUERY_LENGTH = 200;
+const MAX_FOLDER_PATH_LENGTH = 120;
+const FOLDER_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -59,6 +64,65 @@ function parseHierarchicalTags(body = {}, query = null) {
   if (body && (body.folders || body.tags)) return parseFolders(body.folders || body.tags);
   if (query && (query.get('folders') || query.get('tags'))) return parseFolders(query.get('folders') || query.get('tags'));
   return [];
+}
+
+function validateFolderPaths(paths = []) {
+  if (paths.length > 20) {
+    return { error: 'too_many_folders', message: 'folders must be 20 or fewer' };
+  }
+
+  for (const rawPath of paths) {
+    if (typeof rawPath !== 'string') {
+      return { error: 'invalid_folder_path', message: 'folder path must be a string' };
+    }
+    const normalized = rawPath.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    if (!normalized) {
+      return { error: 'invalid_folder_path', message: 'folder path cannot be empty' };
+    }
+    if (normalized.length > MAX_FOLDER_PATH_LENGTH) {
+      return { error: 'invalid_folder_path', message: `folder path must be <= ${MAX_FOLDER_PATH_LENGTH} chars` };
+    }
+    const segments = normalized.split('/');
+    if (segments.some((segment) => !FOLDER_SEGMENT_PATTERN.test(segment))) {
+      return { error: 'invalid_folder_path', message: 'folder segments must match [a-z0-9][a-z0-9_-]*' };
+    }
+  }
+
+  return null;
+}
+
+function validateNotePayload(body, { requireVersion }) {
+  if (typeof body.title !== 'string' || typeof body.content !== 'string') {
+    return { error: 'invalid_payload', message: 'title and content are required as strings' };
+  }
+
+  if (body.title.trim().length > MAX_TITLE_LENGTH) {
+    return { error: 'title_too_long', message: `title must be <= ${MAX_TITLE_LENGTH} chars` };
+  }
+
+  if (body.content.length > MAX_CONTENT_LENGTH) {
+    return { error: 'content_too_long', message: `content must be <= ${MAX_CONTENT_LENGTH} chars` };
+  }
+
+  if (requireVersion && !Number.isInteger(body.version)) {
+    return { error: 'invalid_payload', message: 'version is required as an integer' };
+  }
+
+  if (body.version !== undefined && Number(body.version) < 1) {
+    return { error: 'invalid_payload', message: 'version must be >= 1' };
+  }
+
+  if (body.folders !== undefined && typeof body.folders !== 'string' && !Array.isArray(body.folders)) {
+    return { error: 'invalid_payload', message: 'folders must be an array or comma-separated string' };
+  }
+
+  if (body.tags !== undefined && typeof body.tags !== 'string' && !Array.isArray(body.tags)) {
+    return { error: 'invalid_payload', message: 'tags must be an array or comma-separated string' };
+  }
+
+  const folderError = validateFolderPaths(parseHierarchicalTags(body));
+  if (folderError) return folderError;
+  return null;
 }
 
 export function createServer() {
@@ -107,9 +171,8 @@ export function createServer() {
 
       if (req.method === 'POST' && (url.pathname === '/api/notes' || url.pathname === '/notes')) {
         const body = await readBody(req);
-        if (typeof body.title !== 'string' || typeof body.content !== 'string') {
-          return sendJson(res, 400, { error: 'title and content are required' });
-        }
+        const payloadError = validateNotePayload(body, { requireVersion: false });
+        if (payloadError) return sendJson(res, 400, payloadError);
 
         const result = createNote({
           title: body.title.trim() || 'Untitled',
@@ -124,9 +187,8 @@ export function createServer() {
       if (req.method === 'PUT' && (url.pathname.startsWith('/api/notes/') || url.pathname.startsWith('/notes/'))) {
         const noteId = decodeURIComponent(url.pathname.replace('/api/notes/', '').replace('/notes/', ''));
         const body = await readBody(req);
-        if (typeof body.title !== 'string' || typeof body.content !== 'string' || typeof body.version !== 'number') {
-          return sendJson(res, 400, { error: 'title, content and version are required' });
-        }
+        const payloadError = validateNotePayload(body, { requireVersion: true });
+        if (payloadError) return sendJson(res, 400, payloadError);
 
         const result = updateNote({
           id: noteId,
@@ -162,6 +224,9 @@ export function createServer() {
       if (req.method === 'GET' && (url.pathname === '/api/search' || url.pathname === '/search')) {
         const q = url.searchParams.get('q');
         if (!q) return sendJson(res, 400, { error: 'q is required' });
+        if (q.length > MAX_SEARCH_QUERY_LENGTH) {
+          return sendJson(res, 400, { error: 'query_too_long', message: `q must be <= ${MAX_SEARCH_QUERY_LENGTH} chars` });
+        }
         const hits = searchNotes(q, { limit: 10 }).map((row) => ({
           ...row,
           content_preview: row.content.slice(0, 140),
@@ -173,6 +238,9 @@ export function createServer() {
         const body = await readBody(req);
         if (typeof body.query !== 'string' || !body.query.trim()) {
           return sendJson(res, 400, { error: 'query is required' });
+        }
+        if (body.query.length > MAX_SEARCH_QUERY_LENGTH) {
+          return sendJson(res, 400, { error: 'query_too_long', message: `query must be <= ${MAX_SEARCH_QUERY_LENGTH} chars` });
         }
         const keywords = suggestTags(body.query).join(' OR ') || body.query;
         const rows = searchNotes(keywords, { limit: 5 });
