@@ -9,7 +9,10 @@ function sqlQuote(value) {
 }
 
 function runSql(sql) {
-  return execFileSync('sqlite3', [DB_PATH, sql], { encoding: 'utf8' });
+  const Database = require('better-sqlite3');
+const db = new Database(DB_PATH);
+
+return db.prepare(sql).all();
 }
 
 export function nowTs() {
