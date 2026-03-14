@@ -1,0 +1,16 @@
+RewriteEngine On
+
+# /static/ 配下は HTTP アクセスを許可（旧環境の wget 対応）
+RewriteCond %{REQUEST_URI} !^/static/
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# セキュリティヘッダ（必要最低限）
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# uploads のディレクトリ一覧を禁止
+Options -Indexes

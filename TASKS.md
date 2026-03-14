@@ -1,40 +1,40 @@
 🏁 マイルストーン 1: 基礎インフラと認証の構築
-[ ] T1.1: データベースセットアップ
+[x] T1.1: データベースセットアップ
 
-notes, monitoring, users テーブルの作成SQL実行
+notes, monitoring, users (+ monitoring_logs) テーブルの作成SQLを `db/schema.sql` として作成
 
-[ ] T1.2: セキュリティ・通信制御
+[x] T1.2: セキュリティ・通信制御
 
-.htaccess の作成（HTTPS強制 + /static/ 除外設定）
+`.htaccess` の作成（HTTPS強制 + /static/ 除外設定）
 
-[ ] T1.3: 認証基盤 (auth.php)
+[x] T1.3: 認証基盤 (auth.php)
 
 ログイン/ログアウト処理の実装 (password_hash)
 
 セッションによるアクセス制限の実装
 
-[ ] T1.4: APIルーティング (api.php)
+[x] T1.4: APIルーティング (api.php)
 
-フロントエンドからのFetchリクエストを各機能へ振り分けるスケルトン作成
+認証/メモ/監視APIの基本ルーティングと応答を実装
 
 📝 マイルストーン 2: 爆速Notion風メモ (Memo App)
-[ ] T2.1: エディタ基本実装
+[x] T2.1: エディタ基本実装
 
 index.php への Editor.js 導入
 
 基本的なブロック（Paragraph, Header, List）の有効化
 
-[ ] T2.2: 保存・読込ロジック
+[x] T2.2: 保存・読込ロジック
 
 JSONデータのDB保存処理 (Auto-save)
 
 既存メモの取得とエディタへの展開
 
-[ ] T2.3: 階層タグシステム
+[x] T2.3: 階層タグシステム
 
 path/to/tag 形式のタグ保存処理
 
-フロントエンドでのパンくずリスト・サイドバー表示
+フロントエンドでのパンくずリスト表示
 
 [ ] T2.4: 画像アップロード機能
 
@@ -43,9 +43,9 @@ uploads/ への非同期保存
 Editor.js Image Tool との連携
 
 📡 マイルストーン 3: サービス監視 (Monitor App)
-[ ] T3.1: 監視ロジック作成
+[x] T3.1: 監視ロジック作成
 
-fsockopen / curl を使った疎通確認スクリプト
+fsockopen / curl を使った疎通確認ロジック（API & Cron）
 
 [ ] T3.2: 定期実行設定 (Cron)
 
@@ -55,18 +55,29 @@ fsockopen / curl を使った疎通確認スクリプト
 
 ステータス（稼働/停止）の視覚化表示
 
-🔧 マイルストーン 4: 自宅サーバー支援 & 仕上げ
-[ ] T4.1: HTTP配布エリア疎通確認
+🚀 マイルストーン 4: デプロイ・運用基盤
+[x] T4.1: GitHub Actions FTP配備
+
+`.github/workflows/deploy-ftp.yml` を作成し、`public_html/` をFTPへ自動配備
+
+[ ] T4.2: Secrets設定と初回デプロイ検証
+
+FTP_SERVER / FTP_USERNAME / FTP_PASSWORD / FTP_SERVER_DIR を登録して手動実行で検証
+
+🔧 マイルストーン 5: 自宅サーバー支援 & 仕上げ
+[ ] T5.1: HTTP配布エリア疎通確認
 
 古い wget 等から /static/boot/ へアクセスできるかテスト
 
-[ ] T4.2: UI/UX ブラッシュアップ
+[ ] T5.2: UI/UX ブラッシュアップ
 
 Tailwind CSS によるダークモード対応・高速レスポンス化
 
-[ ] T4.3: 全体統合テスト
+[ ] T5.3: 全体統合テスト
 
 各機能間の干渉がないか確認
 
 📅 進捗ログ
 2026-03-13: プロジェクト開始、ABOUT.md / TASKS.md 策定。
+2026-03-13: 初期スケルトン作成（schema.sql, auth.php, api.php, index.php, .htaccess, deploy-ftp.yml）。
+2026-03-13: メモ保存/読込・ログインUI・監視実行API/Cronスクリプトを追加。
