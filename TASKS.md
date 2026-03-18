@@ -17,6 +17,13 @@ notes, monitoring, users (+ monitoring_logs) テーブルの作成SQLを `db/sch
 
 認証/メモ/監視APIの基本ルーティングと応答を実装
 
+
+[x] T1.5: 初期設定UI & ソーシャルログイン
+
+初回セットアップUI（管理者作成/基本設定/OAuth設定）を追加
+
+Google/GitHub OAuthログインを追加
+
 📝 マイルストーン 2: 爆速Notion風メモ (Memo App)
 [x] T2.1: エディタ基本実装
 
@@ -51,7 +58,7 @@ fsockopen / curl を使った疎通確認ロジック（API & Cron）
 
 エックスサーバーのサーバーパネルでCronを設定（1分毎）
 
-[ ] T3.3: 監視ダッシュボードUI
+[x] T3.3: 監視ダッシュボードUI
 
 ステータス（稼働/停止）の視覚化表示
 
@@ -81,3 +88,5 @@ Tailwind CSS によるダークモード対応・高速レスポンス化
 2026-03-13: プロジェクト開始、ABOUT.md / TASKS.md 策定。
 2026-03-13: 初期スケルトン作成（schema.sql, auth.php, api.php, index.php, .htaccess, deploy-ftp.yml）。
 2026-03-13: メモ保存/読込・ログインUI・監視実行API/Cronスクリプトを追加。
+
+2026-03-17: 初期設定UI（管理者/基本設定/OAuth）とGoogle/GitHubソーシャルログイン、監視ダッシュボードUIを追加。

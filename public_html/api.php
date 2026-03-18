@@ -4,14 +4,56 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/auth.php';
 
+$action = $_GET['action'] ?? '';
+if ($action === 'auth.social.callback') {
+    handle_social_callback();
+}
+
 header('Content-Type: application/json; charset=utf-8');
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$action = $_GET['action'] ?? '';
 $payload = json_input();
 
 try {
     switch ($action) {
+        case 'setup.status':
+            respond([
+                'ok' => true,
+                'setup_completed' => is_setup_completed(),
+                'settings' => app_settings(),
+                'providers' => list_social_providers(false),
+            ]);
+            break;
+
+        case 'setup.initialize':
+            only_method($method, ['POST']);
+            if (is_setup_completed()) {
+                bad_request('Setup already completed.');
+            }
+            initialize_setup($payload);
+            respond(['ok' => true]);
+            break;
+
+        case 'setup.update':
+            only_method($method, ['POST']);
+            require_admin();
+            update_setup_settings($payload);
+            respond(['ok' => true]);
+            break;
+
+        case 'auth.providers':
+            respond(['ok' => true, 'providers' => list_social_providers(true)]);
+            break;
+
+        case 'auth.social.start':
+            $provider = trim((string) ($_GET['provider'] ?? ''));
+            if ($provider === '') {
+                bad_request('provider is required.');
+            }
+            $url = create_social_auth_url($provider);
+            respond(['ok' => true, 'url' => $url]);
+            break;
+
         case 'auth.login':
             only_method($method, ['POST']);
             $email = trim((string) ($payload['email'] ?? ''));
@@ -171,6 +213,292 @@ try {
     }
 } catch (Throwable $e) {
     respond(['ok' => false, 'error' => 'Server error', 'detail' => $e->getMessage()], 500);
+}
+
+function initialize_setup(array $payload): void
+{
+    $siteName = trim((string) ($payload['site_name'] ?? 'MEMOMO'));
+    $defaultTag = trim((string) ($payload['default_tag'] ?? 'inbox'));
+    $email = mb_strtolower(trim((string) ($payload['admin_email'] ?? '')));
+    $password = (string) ($payload['admin_password'] ?? '');
+
+    if ($email === '' || $password === '') {
+        bad_request('admin_email and admin_password are required.');
+    }
+
+    $pdo = db();
+    $pdo->beginTransaction();
+
+    $stmt = $pdo->prepare('INSERT INTO users (email, password_hash, is_admin) VALUES (:email, :hash, 1)');
+    $stmt->execute([
+        'email' => $email,
+        'hash' => password_hash($password, PASSWORD_DEFAULT),
+    ]);
+
+    set_app_setting('site_name', mb_substr($siteName, 0, 100));
+    set_app_setting('default_tag', mb_substr($defaultTag !== '' ? $defaultTag : 'inbox', 0, 255));
+
+    upsert_providers($payload['providers'] ?? []);
+
+    $pdo->commit();
+}
+
+function update_setup_settings(array $payload): void
+{
+    if (isset($payload['site_name'])) {
+        set_app_setting('site_name', mb_substr(trim((string) $payload['site_name']), 0, 100));
+    }
+    if (isset($payload['default_tag'])) {
+        $tag = trim((string) $payload['default_tag']);
+        set_app_setting('default_tag', mb_substr($tag !== '' ? $tag : 'inbox', 0, 255));
+    }
+
+    if (isset($payload['providers']) && is_array($payload['providers'])) {
+        upsert_providers($payload['providers']);
+    }
+}
+
+function upsert_providers(array $providers): void
+{
+    foreach (['google', 'github'] as $providerName) {
+        $row = $providers[$providerName] ?? null;
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $stmt = db()->prepare('INSERT INTO oauth_providers (provider, enabled, client_id, client_secret, redirect_uri) VALUES (:provider, :enabled, :client_id, :client_secret, :redirect_uri) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), client_id = VALUES(client_id), client_secret = VALUES(client_secret), redirect_uri = VALUES(redirect_uri)');
+        $stmt->execute([
+            'provider' => $providerName,
+            'enabled' => !empty($row['enabled']) ? 1 : 0,
+            'client_id' => trim((string) ($row['client_id'] ?? '')),
+            'client_secret' => trim((string) ($row['client_secret'] ?? '')),
+            'redirect_uri' => trim((string) ($row['redirect_uri'] ?? '')),
+        ]);
+    }
+}
+
+function create_social_auth_url(string $provider): string
+{
+    $providerConfig = get_social_provider($provider);
+    if (!$providerConfig || (int) $providerConfig['enabled'] !== 1) {
+        bad_request('provider is not available.');
+    }
+
+    $clientId = (string) $providerConfig['client_id'];
+    $redirectUri = (string) $providerConfig['redirect_uri'];
+
+    if ($clientId === '' || $redirectUri === '') {
+        bad_request('provider configuration is incomplete.');
+    }
+
+    $state = bin2hex(random_bytes(24));
+    $_SESSION['oauth_state_' . $provider] = $state;
+
+    if ($provider === 'google') {
+        $params = [
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'response_type' => 'code',
+            'scope' => 'openid email profile',
+            'state' => $state,
+            'access_type' => 'online',
+            'prompt' => 'select_account',
+        ];
+        return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params);
+    }
+
+    if ($provider === 'github') {
+        $params = [
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'scope' => 'read:user user:email',
+            'state' => $state,
+        ];
+        return 'https://github.com/login/oauth/authorize?' . http_build_query($params);
+    }
+
+    bad_request('unsupported provider.');
+}
+
+function handle_social_callback(): void
+{
+    $provider = trim((string) ($_GET['provider'] ?? ''));
+    $code = trim((string) ($_GET['code'] ?? ''));
+    $state = trim((string) ($_GET['state'] ?? ''));
+
+    if ($provider === '' || $code === '' || $state === '') {
+        social_redirect('/?social_error=invalid_callback');
+    }
+
+    $expectedState = (string) ($_SESSION['oauth_state_' . $provider] ?? '');
+    unset($_SESSION['oauth_state_' . $provider]);
+
+    if ($expectedState === '' || !hash_equals($expectedState, $state)) {
+        social_redirect('/?social_error=invalid_state');
+    }
+
+    $providerConfig = get_social_provider($provider);
+    if (!$providerConfig || (int) $providerConfig['enabled'] !== 1) {
+        social_redirect('/?social_error=provider_disabled');
+    }
+
+    $profile = oauth_profile($provider, (string) $providerConfig['client_id'], (string) $providerConfig['client_secret'], (string) $providerConfig['redirect_uri'], $code);
+    $providerUid = trim((string) ($profile['provider_uid'] ?? ''));
+    $email = mb_strtolower(trim((string) ($profile['email'] ?? '')));
+
+    if ($providerUid === '' || $email === '') {
+        social_redirect('/?social_error=profile_failed');
+    }
+
+    $pdo = db();
+    $stmt = $pdo->prepare('SELECT u.id, u.email, u.is_admin FROM social_accounts s INNER JOIN users u ON u.id = s.user_id WHERE s.provider = :p AND s.provider_user_id = :uid LIMIT 1');
+    $stmt->execute(['p' => $provider, 'uid' => $providerUid]);
+    $user = $stmt->fetch();
+
+    if (!$user) {
+        $stmt = $pdo->prepare('SELECT id, email, is_admin FROM users WHERE email = :email LIMIT 1');
+        $stmt->execute(['email' => $email]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            $create = $pdo->prepare('INSERT INTO users (email, password_hash, is_admin) VALUES (:email, :hash, 0)');
+            $create->execute([
+                'email' => $email,
+                'hash' => password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT),
+            ]);
+            $user = [
+                'id' => (int) $pdo->lastInsertId(),
+                'email' => $email,
+                'is_admin' => 0,
+            ];
+        }
+
+        $link = $pdo->prepare('INSERT INTO social_accounts (user_id, provider, provider_user_id, provider_email) VALUES (:user_id, :provider, :provider_uid, :provider_email) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), provider_email = VALUES(provider_email)');
+        $link->execute([
+            'user_id' => $user['id'],
+            'provider' => $provider,
+            'provider_uid' => $providerUid,
+            'provider_email' => $email,
+        ]);
+    }
+
+    do_login_session($user);
+    social_redirect('/');
+}
+
+function oauth_profile(string $provider, string $clientId, string $clientSecret, string $redirectUri, string $code): array
+{
+    if ($provider === 'google') {
+        $token = http_form('https://oauth2.googleapis.com/token', [
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'code' => $code,
+            'redirect_uri' => $redirectUri,
+            'grant_type' => 'authorization_code',
+        ]);
+        $accessToken = (string) ($token['access_token'] ?? '');
+        $idToken = (string) ($token['id_token'] ?? '');
+
+        if ($accessToken === '' && $idToken === '') {
+            return [];
+        }
+
+        $userinfo = http_get_json('https://openidconnect.googleapis.com/v1/userinfo', ['Authorization: Bearer ' . $accessToken]);
+        return [
+            'provider_uid' => $userinfo['sub'] ?? '',
+            'email' => $userinfo['email'] ?? '',
+        ];
+    }
+
+    if ($provider === 'github') {
+        $token = http_form('https://github.com/login/oauth/access_token', [
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'code' => $code,
+            'redirect_uri' => $redirectUri,
+        ], ['Accept: application/json']);
+        $accessToken = (string) ($token['access_token'] ?? '');
+
+        if ($accessToken === '') {
+            return [];
+        }
+
+        $user = http_get_json('https://api.github.com/user', [
+            'Authorization: Bearer ' . $accessToken,
+            'User-Agent: memomo-app',
+            'Accept: application/vnd.github+json',
+        ]);
+        $emails = http_get_json('https://api.github.com/user/emails', [
+            'Authorization: Bearer ' . $accessToken,
+            'User-Agent: memomo-app',
+            'Accept: application/vnd.github+json',
+        ]);
+
+        $primaryEmail = '';
+        if (is_array($emails)) {
+            foreach ($emails as $row) {
+                if (!empty($row['primary']) && !empty($row['verified']) && !empty($row['email'])) {
+                    $primaryEmail = (string) $row['email'];
+                    break;
+                }
+            }
+        }
+
+        return [
+            'provider_uid' => (string) ($user['id'] ?? ''),
+            'email' => $primaryEmail,
+        ];
+    }
+
+    return [];
+}
+
+function http_form(string $url, array $params, array $headers = []): array
+{
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => array_merge(['Content-Type: application/x-www-form-urlencoded'], $headers),
+        CURLOPT_POSTFIELDS => http_build_query($params),
+    ]);
+    $response = curl_exec($ch);
+    $errno = curl_errno($ch);
+    curl_close($ch);
+
+    if ($errno || !is_string($response)) {
+        return [];
+    }
+
+    $json = json_decode($response, true);
+    return is_array($json) ? $json : [];
+}
+
+function http_get_json(string $url, array $headers = []): array
+{
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+    ]);
+    $response = curl_exec($ch);
+    $errno = curl_errno($ch);
+    curl_close($ch);
+
+    if ($errno || !is_string($response)) {
+        return [];
+    }
+
+    $json = json_decode($response, true);
+    return is_array($json) ? $json : [];
+}
+
+function social_redirect(string $path): void
+{
+    header('Location: ' . $path);
+    exit;
 }
 
 function check_target(string $targetType, string $targetValue, int $timeoutMs): array
