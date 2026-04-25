@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Memomo - ノートアプリ</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <style>
+        :root {
+            --primary: #007aff;
+            --bg: #f2f2f7;
+            --panel: #ffffff;
+            --text: #1c1c1e;
+            --canvas-bg: #ffffff;
+            --border: rgba(0,0,0,0.1);
+        }
+
+        body.dark-mode {
+            --bg: #1c1c1e;
+            --panel: #2c2c2e;
+            --text: #f2f2f7;
+            --canvas-bg: #121212;
+            --border: rgba(255,255,255,0.1);
+        }
+
+        body { font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; background: var(--bg); touch-action: none; color: var(--text); transition: background 0.3s; }
+
+        /* --- UI Components --- */
+        .header {
+            position: fixed; top: 0; left: 0; right: 0; height: 60px;
+            background: var(--panel); opacity: 0.98; backdrop-filter: blur(10px);
+            display: flex; align-items: center; padding: 0 15px;
+            box-shadow: 0 1px 0 var(--border); z-index: 100;
+        }
+        
+        .tool-group { display: flex; align-items: center; gap: 5px; background: rgba(120,120,128,0.1); padding: 4px; border-radius: 12px; }
+        
+        button.icon-btn {
+            background: none; border: none; padding: 8px; border-radius: 8px;
+            cursor: pointer; color: var(--text); display: flex; align-items: center; transition: 0.2s;
+        }
+        button.icon-btn:hover { background: rgba(0,0,0,0.05); }
+        button.icon-btn.active { color: var(--primary); background: var(--panel); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+
+        .dropdown-panel {
+            position: absolute; top: 70px; left: 60px;
+            background: var(--panel); border-radius: 12px; padding: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            display: none; flex-direction: column; gap: 10px; z-index: 150;
+            border: 1px solid var(--border);
+        }
+        .dropdown-panel.open { display: flex; }
+        .setting-item { display: flex; align-items: center; gap: 10px; white-space: nowrap; font-size: 14px; }
+
+        #menu-drawer {
+            position: fixed; top: 0; left: -300px; width: 280px; height: 100%;
+            background: var(--panel); z-index: 200; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            padding: 20px; box-sizing: border-box; display: flex; flex-direction: column;
+        }
+        #menu-drawer.open { left: 0; box-shadow: 5px 0 20px rgba(0,0,0,0.2); }
+        .menu-item { display: flex; align-items: center; gap: 15px; padding: 15px; cursor: pointer; border-radius: 12px; margin-bottom: 5px; }
+        .menu-item:hover { background: rgba(120,120,128,0.1); }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; z-index: 150; }
+
+        #gallery-overlay {
+            position: fixed; inset: 0; background: var(--bg); z-index: 300; display: none; flex-direction: column;
+        }
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 25px; overflow-y: auto;}
+        .gallery-card { background: var(--panel); border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; border: 1px solid var(--border); transition: 0.2s; }
+        .gallery-card:hover { transform: translateY(-3px); }
+        .card-thumb { height: 120px; background: white; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); overflow: hidden; }
+        .card-thumb img { width: 100%; height: 100%; object-fit: contain; }
+        .card-info { padding: 12px; display: flex; justify-content: space-between; align-items: center; }
+
+        canvas { display: block; background: var(--canvas-bg); }
+        #status { position: fixed; bottom: 15px; right: 20px; font-size: 11px; color: #aaa; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <button class="icon-btn" id="menuBtn"><span class="material-symbols-outlined">menu</span></button>
+    <div class="tool-group" style="margin-left: 10px;">
+        <button class="icon-btn active" id="penBtn"><span class="material-symbols-outlined">edit</span></button>
+        <button class="icon-btn" id="eraserBtn"><span class="material-symbols-outlined">ink_eraser</span></button>
+        <button class="icon-btn" id="moveBtn"><span class="material-symbols-outlined">pan_tool</span></button>
+    </div>
+    <div class="dropdown-panel" id="penSettings">
+        <div class="setting-item"><label>色</label><input type="color" id="colorPicker" value="#555555"></div>
+        <div class="setting-item"><label>太さ</label><input type="range" id="lineWidth" min="1" max="50" value="3"></div>
+    </div>
+    <div style="flex-grow: 1; text-align: center; font-weight: 600;" id="currentTitle">読み込み中...</div>
+    <div class="tool-group">
+        <button class="icon-btn" id="undoBtn"><span class="material-symbols-outlined">undo</span></button>
+        <button class="icon-btn" id="redoBtn"><span class="material-symbols-outlined">redo</span></button>
+    </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div id="menu-drawer">
+    <h2 style="margin: 0 0 20px 10px;">Memomo</h2>
+    <div class="menu-item" id="btnGallery"><span class="material-symbols-outlined">grid_view</span> ギャラリー</div>
+    <div class="menu-item" id="btnNew"><span class="material-symbols-outlined">add_box</span> 新規作成</div>
+    <div class="menu-item" id="btnRename"><span class="material-symbols-outlined">drive_file_rename_outline</span> 名前の変更</div>
+    <div class="menu-item" id="toggleDarkMode"><span class="material-symbols-outlined">dark_mode</span> テーマ切替</div>
+    <hr style="width:100%; border:0; border-top:1px solid var(--border); margin:10px 0;">
+    <div class="menu-item" id="btnImport"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
+    <div class="menu-item" id="btnExport"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
+    <div class="menu-item" id="btnResetView"><span class="material-symbols-outlined">center_focus_strong</span> 表示をリセット</div>
+    <div class="menu-item" id="btnClear" style="color: #ff453a;"><span class="material-symbols-outlined">delete_sweep</span> 全データを削除</div>
+</div>
+
+<div id="gallery-overlay">
+    <div class="header">
+        <button class="icon-btn" id="closeGallery"><span class="material-symbols-outlined">close</span></button>
+        <h2 style="font-size: 18px; margin-left: 15px;">ライブラリ</h2>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
+</div>
+
+<div id="status">Zoom: 100%</div>
+<canvas id="canvas"></canvas>
+<input type="file" id="fileInput" accept="image/*" style="display:none">
+
+<script>
+    // --- IndexedDB Logic ---
+    const DB_NAME = 'InfiniteNoteDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'memos';
+    let db;
+
+    const dbOpen = () => {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = (e) => reject(e.target.error);
+        });
+    };
+
+    const getAllMemos = async () => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        return new Promise(resolve => {
+            store.getAll().onsuccess = (e) => resolve(e.target.result);
+        });
+    };
+
+    const saveMemo = async (memo) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put(memo);
+    };
+
+    const deleteMemoFromDB = async (id) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.delete(id);
+    };
+
+    // --- App Logic ---
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let memos = [];
+    let currentMemo = null;
+    let camera = { x: 0, y: 0, zoom: 1 };
+    let mode = 'pen', isDrawing = false, isMoving = false;
+    let lastPos = { x: 0, y: 0 }, lastDist = 0, currentLine = null, redoStack = [];
+
+    async function init() {
+        db = await dbOpen();
+        window.addEventListener('resize', resize);
+        resize();
+        
+        if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+        
+        memos = await getAllMemos();
+        if (memos.length === 0) {
+            await createNewMemo();
+        } else {
+            await openMemo(memos[0].id);
+        }
+        requestAnimationFrame(render);
+    }
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    async function createNewMemo() {
+        const id = Date.now();
+        const newMemo = { id, title: "新規メモ", elements: [], thumb: "" };
+        memos.push(newMemo);
+        await saveMemo(newMemo);
+        await openMemo(id);
+    }
+
+    async function openMemo(id) {
+        currentMemo = memos.find(m => m.id === id);
+        document.getElementById('currentTitle').innerText = currentMemo.title;
+        camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 };
+        redoStack = [];
+        document.getElementById('gallery-overlay').style.display = 'none';
+        closeMenu();
+    }
+
+    async function commitSave() {
+        if (!currentMemo) return;
+        const temp = document.createElement('canvas');
+        temp.width = 300; temp.height = 200; // サムネイルサイズ固定で節約
+        const tCtx = temp.getContext('2d');
+        tCtx.fillStyle = "#ffffff";
+        tCtx.fillRect(0, 0, temp.width, temp.height);
+        // 現在の表示をアスペクト比を保って描画（簡易版）
+        tCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 300, 200);
+        currentMemo.thumb = temp.toDataURL('image/jpeg', 0.6);
+        await saveMemo(currentMemo);
+    }
+
+    function toWorld(sX, sY) {
+        return { x: (sX - camera.x) / camera.zoom, y: (sY - camera.y) / camera.zoom };
+    }
+
+    function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!currentMemo) return;
+        ctx.save();
+        ctx.translate(camera.x, camera.y);
+        ctx.scale(camera.zoom, camera.zoom);
+
+        currentMemo.elements.forEach(el => {
+            if (el.type === 'path') drawPath(el);
+            else if (el.type === 'image') drawImage(el);
+        });
+        if (currentLine) drawPath(currentLine);
+        
+        ctx.restore();
+        document.getElementById('status').innerText = `Zoom: ${Math.round(camera.zoom * 100)}%`;
+        requestAnimationFrame(render);
+    }
+
+    function drawPath(line) {
+        if (line.points.length < 2) return;
+        ctx.beginPath();
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth = line.width;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.moveTo(line.points[0].x, line.points[0].y);
+        for (let i = 1; i < line.points.length; i++) ctx.lineTo(line.points[i].x, line.points[i].y);
+        ctx.stroke();
+    }
+
+    const imgCache = new Map();
+    function drawImage(el) {
+        if (!imgCache.has(el.data)) {
+            const img = new Image(); img.src = el.data;
+            img.onload = () => imgCache.set(el.data, img);
+        } else {
+            ctx.drawImage(imgCache.get(el.data), el.x, el.y, el.w, el.h);
+        }
+    }
+
+    // --- Interaction ---
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const oldZoom = camera.zoom;
+        camera.zoom *= (1 - e.deltaY * 0.001);
+        camera.zoom = Math.max(0.05, Math.min(camera.zoom, 15));
+        camera.x = e.clientX - (e.clientX - camera.x) * (camera.zoom / oldZoom);
+        camera.y = e.clientY - (e.clientY - camera.y) * (camera.zoom / oldZoom);
+    }, { passive: false });
+
+    function start(e) {
+        const t = e.touches;
+        if (t && t.length === 2) { isDrawing = false; lastDist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); return; }
+        const { clientX, clientY } = t ? t[0] : e;
+        lastPos = { x: clientX, y: clientY };
+
+        if (!e.target.closest('#penSettings') && !e.target.closest('#penBtn')) document.getElementById('penSettings').classList.remove('open');
+
+        if (mode === 'move' || e.button === 1) isMoving = true;
+        else {
+            isDrawing = true;
+            redoStack = [];
+            currentLine = {
+                type: 'path',
+                color: mode === 'eraser' ? (document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff') : document.getElementById('colorPicker').value,
+                width: document.getElementById('lineWidth').value / camera.zoom,
+                points: [toWorld(clientX, clientY)]
+            };
+        }
+    }
+
+    function move(e) {
+        const t = e.touches;
+        if (t && t.length === 2) {
+            const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+            const midX = (t[0].clientX + t[1].clientX) / 2, midY = (t[0].clientY + t[1].clientY) / 2;
+            const oldZoom = camera.zoom;
+            camera.zoom *= (dist / lastDist);
+            camera.zoom = Math.max(0.05, Math.min(camera.zoom, 15));
+            camera.x = midX - (midX - camera.x) * (camera.zoom / oldZoom);
+            camera.y = midY - (midY - camera.y) * (camera.zoom / oldZoom);
+            lastDist = dist; return;
+        }
+        const { clientX, clientY } = t ? t[0] : e;
+        if (isMoving) {
+            camera.x += clientX - lastPos.x; camera.y += clientY - lastPos.y;
+            lastPos = { x: clientX, y: clientY };
+        } else if (isDrawing) {
+            currentLine.points.push(toWorld(clientX, clientY));
+        }
+    }
+
+    async function end() {
+        if (isDrawing) { currentMemo.elements.push(currentLine); await commitSave(); }
+        isDrawing = isMoving = false; currentLine = null;
+    }
+
+    // --- UI/Buttons ---
+    const menu = document.getElementById('menu-drawer'), ov = document.getElementById('overlay');
+    const closeMenu = () => { menu.classList.remove('open'); ov.style.display = 'none'; };
+    document.getElementById('menuBtn').onclick = () => { menu.classList.add('open'); ov.style.display = 'block'; };
+    ov.onclick = closeMenu;
+
+    document.getElementById('penBtn').onclick = () => { if (mode === 'pen') document.getElementById('penSettings').classList.toggle('open'); else { mode = 'pen'; updateTool(); } };
+    document.getElementById('eraserBtn').onclick = () => { mode = 'eraser'; updateTool(); };
+    document.getElementById('moveBtn').onclick = () => { mode = 'move'; updateTool(); };
+    function updateTool() {
+        document.getElementById('penBtn').classList.toggle('active', mode === 'pen');
+        document.getElementById('eraserBtn').classList.toggle('active', mode === 'eraser');
+        document.getElementById('moveBtn').classList.toggle('active', mode === 'move');
+        document.getElementById('penSettings').classList.remove('open');
+    }
+
+    document.getElementById('undoBtn').onclick = async () => { if (currentMemo.elements.length > 0) { redoStack.push(currentMemo.elements.pop()); await commitSave(); } };
+    document.getElementById('redoBtn').onclick = async () => { if (redoStack.length > 0) { currentMemo.elements.push(redoStack.pop()); await commitSave(); } };
+
+    document.getElementById('toggleDarkMode').onclick = () => {
+        const isDark = document.body.classList.toggle('dark-mode');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    };
+
+    document.getElementById('btnGallery').onclick = async () => {
+        const grid = document.getElementById('galleryGrid'); grid.innerHTML = '';
+        memos = await getAllMemos();
+        memos.forEach(m => {
+            const card = document.createElement('div'); card.className = 'gallery-card';
+            card.innerHTML = `<div class="card-thumb"><img src="${m.thumb || ''}"></div><div class="card-info"><b>${m.title}</b><span class="material-symbols-outlined del-btn" style="color:red">delete</span></div>`;
+            card.onclick = () => openMemo(m.id);
+            card.querySelector('.del-btn').onclick = async (e) => {
+                e.stopPropagation(); if (confirm('消去？')) {
+                    await deleteMemoFromDB(m.id); memos = await getAllMemos();
+                    if (memos.length === 0) await createNewMemo(); else await openMemo(memos[0].id);
+                    document.getElementById('btnGallery').click();
+                }
+            };
+            grid.appendChild(card);
+        });
+        document.getElementById('gallery-overlay').style.display = 'flex';
+    };
+
+    document.getElementById('closeGallery').onclick = () => document.getElementById('gallery-overlay').style.display = 'none';
+    document.getElementById('btnNew').onclick = createNewMemo;
+    document.getElementById('btnResetView').onclick = () => { camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 }; closeMenu(); };
+    document.getElementById('btnRename').onclick = async () => {
+        const n = prompt("名前変更", currentMemo.title); if (n) { currentMemo.title = n; document.getElementById('currentTitle').innerText = n; await commitSave(); } closeMenu();
+    };
+    document.getElementById('btnExport').onclick = () => {
+        const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
+        const tc = t.getContext('2d'); tc.fillStyle = document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff';
+        tc.fillRect(0, 0, t.width, t.height); tc.drawImage(canvas, 0, 0);
+        const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
+    };
+    document.getElementById('btnImport').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('fileInput').onchange = (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        const r = new FileReader(); r.onload = (ev) => {
+            const img = new Image(); img.onload = async () => {
+                const w = toWorld(canvas.width / 2, canvas.height / 2);
+                currentMemo.elements.push({ type: 'image', data: ev.target.result, x: w.x - (img.width / 2 / camera.zoom), y: w.y - (img.height / 2 / camera.zoom), w: img.width / camera.zoom, h: img.height / camera.zoom });
+                await commitSave();
+            }; img.src = ev.target.result;
+        }; r.readAsDataURL(f);
+    };
+    document.getElementById('btnClear').onclick = () => { if (confirm('全データ削除？')) { indexedDB.deleteDatabase(DB_NAME); location.reload(); } };
+
+    canvas.addEventListener('mousedown', start);
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); start(e); }, { passive: false });
+    canvas.addEventListener('touchmove', e => { e.preventDefault(); move(e); }, { passive: false });
+    canvas.addEventListener('touchend', end);
+
+    init();
+</script>
+</body>
+</html>
