@@ -22,7 +22,7 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp   # もしエラーが出るなら ftps を試す
           port: 21
-          local-dir: ./public_html/
+          local-dir: ./
           server-dir: ${{ secrets.FTP_SERVER_DIR }}
           state-name: .ftp-deploy-sync-state.json # 同期状態を管理して差分のみ送る
           dangerous-clean-slate: false
