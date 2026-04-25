@@ -1,4 +1,4 @@
-const CACHE_NAME = 'memomo-v1';
+const CACHE_NAME = 'memomo-v2';
 const ASSETS = [
   'index.html',
   'manifest.json',
