@@ -92,6 +92,7 @@
     <div class="tool-group" style="margin-left: 10px;">
         <button class="icon-btn active" id="penBtn"><span class="material-symbols-outlined">edit</span></button>
         <button class="icon-btn" id="eraserBtn"><span class="material-symbols-outlined">ink_eraser</span></button>
+        <button class="icon-btn" id="lassoBtn"><span class="material-symbols-outlined">lasso_select</span></button>
         <button class="icon-btn" id="moveBtn"><span class="material-symbols-outlined">pan_tool</span></button>
     </div>
     <div class="dropdown-panel" id="penSettings">
@@ -112,9 +113,17 @@
     <div class="menu-item" id="btnNew"><span class="material-symbols-outlined">add_box</span> 新規作成</div>
     <div class="menu-item" id="btnRename"><span class="material-symbols-outlined">drive_file_rename_outline</span> 名前の変更</div>
     <div class="menu-item" id="toggleDarkMode"><span class="material-symbols-outlined">dark_mode</span> テーマ切替</div>
+    <div class="menu-item" style="justify-content: space-between;">
+        <span style="display:flex; align-items:center; gap:15px;">
+            <span class="material-symbols-outlined">gesture</span> 線の平均化
+        </span>
+        <input type="checkbox" id="smoothToggle">
+    </div>
     <hr style="width:100%; border:0; border-top:1px solid var(--border); margin:10px 0;">
-    <div class="menu-item" id="btnImport"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
-    <div class="menu-item" id="btnExport"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
+    <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
+    <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
+    <div class="menu-item" id="btnExportMemomo"><span class="material-symbols-outlined">save</span> .memomo 書き出し</div>
+    <div class="menu-item" id="btnImportMemomo"><span class="material-symbols-outlined">upload_file</span> .memomo 読み込み</div>
     <div class="menu-item" id="btnResetView"><span class="material-symbols-outlined">center_focus_strong</span> 表示をリセット</div>
     <div class="menu-item" id="btnClear" style="color: #ff453a;"><span class="material-symbols-outlined">delete_sweep</span> 全データを削除</div>
 </div>
@@ -130,6 +139,7 @@
 <div id="status">Zoom: 100%</div>
 <canvas id="canvas"></canvas>
 <input type="file" id="fileInput" accept="image/*" style="display:none">
+<input type="file" id="memomoFileInput" accept=".memomo,application/json" style="display:none">
 
 <script>
     // --- IndexedDB Logic ---
@@ -178,8 +188,10 @@
     let memos = [];
     let currentMemo = null;
     let camera = { x: 0, y: 0, zoom: 1 };
-    let mode = 'pen', isDrawing = false, isMoving = false;
+    let mode = 'pen', isDrawing = false, isMoving = false, isLassoing = false, isDraggingSelection = false;
     let lastPos = { x: 0, y: 0 }, lastDist = 0, currentLine = null, redoStack = [];
+    let lassoPoints = [], selectedIndices = new Set();
+    let smoothLines = localStorage.getItem('smoothLines') !== 'off';
 
     async function init() {
         db = await dbOpen();
@@ -187,6 +199,7 @@
         resize();
         
         if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+        document.getElementById('smoothToggle').checked = smoothLines;
         
         memos = await getAllMemos();
         if (memos.length === 0) {
@@ -215,6 +228,8 @@
         document.getElementById('currentTitle').innerText = currentMemo.title;
         camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 };
         redoStack = [];
+        selectedIndices.clear();
+        lassoPoints = [];
         document.getElementById('gallery-overlay').style.display = 'none';
         closeMenu();
     }
@@ -248,7 +263,21 @@
             else if (el.type === 'image') drawImage(el);
         });
         if (currentLine) drawPath(currentLine);
-        
+        selectedIndices.forEach(i => {
+            if (currentMemo.elements[i]) drawSelectionOutline(currentMemo.elements[i]);
+        });
+        if (lassoPoints.length > 1) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.setLineDash([8 / camera.zoom, 6 / camera.zoom]);
+            ctx.lineWidth = 2 / camera.zoom;
+            ctx.strokeStyle = '#007aff';
+            ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+            for (let i = 1; i < lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         ctx.restore();
         document.getElementById('status').innerText = `Zoom: ${Math.round(camera.zoom * 100)}%`;
         requestAnimationFrame(render);
@@ -263,6 +292,90 @@
         ctx.moveTo(line.points[0].x, line.points[0].y);
         for (let i = 1; i < line.points.length; i++) ctx.lineTo(line.points[i].x, line.points[i].y);
         ctx.stroke();
+    }
+
+    function drawSelectionOutline(el) {
+        ctx.save();
+        ctx.setLineDash([6 / camera.zoom, 6 / camera.zoom]);
+        ctx.lineWidth = 2 / camera.zoom;
+        ctx.strokeStyle = '#007aff';
+        if (el.type === 'path' && el.points.length > 0) {
+            const bounds = getPathBounds(el.points);
+            if (!bounds) return ctx.restore();
+            ctx.strokeRect(bounds.minX - 6 / camera.zoom, bounds.minY - 6 / camera.zoom, bounds.maxX - bounds.minX + 12 / camera.zoom, bounds.maxY - bounds.minY + 12 / camera.zoom);
+        } else if (el.type === 'image') {
+            ctx.strokeRect(el.x, el.y, el.w, el.h);
+        }
+        ctx.restore();
+    }
+
+    function getPathBounds(points) {
+        if (!points || points.length === 0) return null;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        points.forEach(p => {
+            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+        });
+        return { minX, minY, maxX, maxY };
+    }
+
+    function pointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const xi = polygon[i].x, yi = polygon[i].y;
+            const xj = polygon[j].x, yj = polygon[j].y;
+            const intersect = ((yi > point.y) !== (yj > point.y))
+                && (point.x < (xj - xi) * (point.y - yi) / ((yj - yi) || 1e-9) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    function distanceToSegment(p, a, b) {
+        const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+        if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+        let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const proj = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
+        return Math.hypot(p.x - proj.x, p.y - proj.y);
+    }
+
+    function isPointOnElement(worldPoint, element) {
+        const pad = 10 / camera.zoom;
+        if (element.type === 'image') {
+            return worldPoint.x >= element.x - pad && worldPoint.x <= element.x + element.w + pad
+                && worldPoint.y >= element.y - pad && worldPoint.y <= element.y + element.h + pad;
+        }
+        if (element.type === 'path' && element.points.length > 1) {
+            for (let i = 1; i < element.points.length; i++) {
+                if (distanceToSegment(worldPoint, element.points[i - 1], element.points[i]) <= Math.max(pad, element.width / 2)) return true;
+            }
+        }
+        return false;
+    }
+
+    function moveElement(element, dx, dy) {
+        if (element.type === 'image') {
+            element.x += dx; element.y += dy;
+        } else if (element.type === 'path') {
+            element.points.forEach(p => { p.x += dx; p.y += dy; });
+        }
+    }
+
+    function smoothStroke(points) {
+        if (!Array.isArray(points) || points.length < 4) return points;
+        const smoothed = [points[0]];
+        for (let i = 1; i < points.length - 1; i++) {
+            const prev = points[i - 1];
+            const curr = points[i];
+            const next = points[i + 1];
+            smoothed.push({
+                x: (prev.x + curr.x * 2 + next.x) / 4,
+                y: (prev.y + curr.y * 2 + next.y) / 4
+            });
+        }
+        smoothed.push(points[points.length - 1]);
+        return smoothed;
     }
 
     const imgCache = new Map();
@@ -294,9 +407,19 @@
         if (!e.target.closest('#penSettings') && !e.target.closest('#penBtn')) document.getElementById('penSettings').classList.remove('open');
 
         if (mode === 'move' || e.button === 1) isMoving = true;
-        else {
+        else if (mode === 'lasso') {
+            const world = toWorld(clientX, clientY);
+            const hitSelected = [...selectedIndices].some(i => currentMemo.elements[i] && isPointOnElement(world, currentMemo.elements[i]));
+            if (selectedIndices.size > 0 && hitSelected) {
+                isDraggingSelection = true;
+            } else {
+                isLassoing = true;
+                lassoPoints = [world];
+            }
+        } else {
             isDrawing = true;
             redoStack = [];
+            selectedIndices.clear();
             currentLine = {
                 type: 'path',
                 color: mode === 'eraser' ? (document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff') : document.getElementById('colorPicker').value,
@@ -322,14 +445,46 @@
         if (isMoving) {
             camera.x += clientX - lastPos.x; camera.y += clientY - lastPos.y;
             lastPos = { x: clientX, y: clientY };
+        } else if (isDraggingSelection) {
+            const prev = toWorld(lastPos.x, lastPos.y);
+            const next = toWorld(clientX, clientY);
+            const dx = next.x - prev.x;
+            const dy = next.y - prev.y;
+            selectedIndices.forEach(i => moveElement(currentMemo.elements[i], dx, dy));
+            lastPos = { x: clientX, y: clientY };
+        } else if (isLassoing) {
+            const world = toWorld(clientX, clientY);
+            const last = lassoPoints[lassoPoints.length - 1];
+            if (!last || Math.hypot(world.x - last.x, world.y - last.y) > 4 / camera.zoom) lassoPoints.push(world);
         } else if (isDrawing) {
             currentLine.points.push(toWorld(clientX, clientY));
         }
     }
 
     async function end() {
-        if (isDrawing) { currentMemo.elements.push(currentLine); await commitSave(); }
-        isDrawing = isMoving = false; currentLine = null;
+        if (isDrawing) {
+            if (smoothLines && currentLine?.type === 'path') currentLine.points = smoothStroke(currentLine.points);
+            currentMemo.elements.push(currentLine);
+            await commitSave();
+        }
+        if (isDraggingSelection) await commitSave();
+        if (isLassoing && lassoPoints.length > 2) {
+            selectedIndices.clear();
+            currentMemo.elements.forEach((el, idx) => {
+                if (el.type === 'path' && el.points.some(p => pointInPolygon(p, lassoPoints))) selectedIndices.add(idx);
+                else if (el.type === 'image') {
+                    const corners = [
+                        { x: el.x, y: el.y }, { x: el.x + el.w, y: el.y },
+                        { x: el.x, y: el.y + el.h }, { x: el.x + el.w, y: el.y + el.h },
+                        { x: el.x + el.w / 2, y: el.y + el.h / 2 }
+                    ];
+                    if (corners.some(p => pointInPolygon(p, lassoPoints))) selectedIndices.add(idx);
+                }
+            });
+        }
+        isDrawing = isMoving = isLassoing = isDraggingSelection = false;
+        currentLine = null;
+        lassoPoints = [];
     }
 
     // --- UI/Buttons ---
@@ -340,10 +495,12 @@
 
     document.getElementById('penBtn').onclick = () => { if (mode === 'pen') document.getElementById('penSettings').classList.toggle('open'); else { mode = 'pen'; updateTool(); } };
     document.getElementById('eraserBtn').onclick = () => { mode = 'eraser'; updateTool(); };
+    document.getElementById('lassoBtn').onclick = () => { mode = 'lasso'; updateTool(); };
     document.getElementById('moveBtn').onclick = () => { mode = 'move'; updateTool(); };
     function updateTool() {
         document.getElementById('penBtn').classList.toggle('active', mode === 'pen');
         document.getElementById('eraserBtn').classList.toggle('active', mode === 'eraser');
+        document.getElementById('lassoBtn').classList.toggle('active', mode === 'lasso');
         document.getElementById('moveBtn').classList.toggle('active', mode === 'move');
         document.getElementById('penSettings').classList.remove('open');
     }
@@ -354,6 +511,10 @@
     document.getElementById('toggleDarkMode').onclick = () => {
         const isDark = document.body.classList.toggle('dark-mode');
         localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    };
+    document.getElementById('smoothToggle').onchange = (e) => {
+        smoothLines = e.target.checked;
+        localStorage.setItem('smoothLines', smoothLines ? 'on' : 'off');
     };
 
     document.getElementById('btnGallery').onclick = async () => {
@@ -381,13 +542,13 @@
     document.getElementById('btnRename').onclick = async () => {
         const n = prompt("名前変更", currentMemo.title); if (n) { currentMemo.title = n; document.getElementById('currentTitle').innerText = n; await commitSave(); } closeMenu();
     };
-    document.getElementById('btnExport').onclick = () => {
+    document.getElementById('btnExportImage').onclick = () => {
         const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
         const tc = t.getContext('2d'); tc.fillStyle = document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff';
         tc.fillRect(0, 0, t.width, t.height); tc.drawImage(canvas, 0, 0);
         const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
     };
-    document.getElementById('btnImport').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('btnImportImage').onclick = () => document.getElementById('fileInput').click();
     document.getElementById('fileInput').onchange = (e) => {
         const f = e.target.files[0]; if (!f) return;
         const r = new FileReader(); r.onload = (ev) => {
@@ -397,6 +558,51 @@
                 await commitSave();
             }; img.src = ev.target.result;
         }; r.readAsDataURL(f);
+    };
+
+    document.getElementById('btnExportMemomo').onclick = async () => {
+        const data = {
+            format: 'memomo-indexeddb-export',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            memos: await getAllMemos()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.download = `memomo-export-${new Date().toISOString().slice(0, 10)}.memomo`;
+        a.href = URL.createObjectURL(blob);
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+    document.getElementById('btnImportMemomo').onclick = () => document.getElementById('memomoFileInput').click();
+    document.getElementById('memomoFileInput').onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+            const text = await f.text();
+            const payload = JSON.parse(text);
+            if (payload.format !== 'memomo-indexeddb-export' || !Array.isArray(payload.memos)) {
+                alert('この .memomo ファイルは読み込めません');
+                return;
+            }
+            for (const memo of payload.memos) {
+                const safeMemo = {
+                    id: Number(memo.id) || Date.now() + Math.floor(Math.random() * 100000),
+                    title: String(memo.title || '新規メモ'),
+                    elements: Array.isArray(memo.elements) ? memo.elements : [],
+                    thumb: typeof memo.thumb === 'string' ? memo.thumb : ''
+                };
+                if (memos.some(m => m.id === safeMemo.id)) safeMemo.id = Date.now() + Math.floor(Math.random() * 100000);
+                memos.push(safeMemo);
+                await saveMemo(safeMemo);
+            }
+            await openMemo(memos[memos.length - 1].id);
+            alert(`${payload.memos.length}件のメモを読み込みました`);
+        } catch (err) {
+            alert(`読み込みに失敗しました: ${err.message}`);
+        } finally {
+            e.target.value = '';
+        }
     };
     document.getElementById('btnClear').onclick = () => { if (confirm('全データ削除？')) { indexedDB.deleteDatabase(DB_NAME); location.reload(); } };
 
