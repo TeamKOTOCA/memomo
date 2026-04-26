@@ -50,6 +50,9 @@
         }
         button.icon-btn:hover { background: rgba(0,0,0,0.05); }
         button.icon-btn.active { color: var(--primary); background: var(--panel); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .btn-label { display: inline-flex; align-items: center; gap: 2px; }
+        .pen-caret { font-size: 16px; line-height: 1; opacity: 0; transform: translateY(1px); transition: opacity 0.2s; }
+        #penBtn.active .pen-caret { opacity: 0.8; }
 
         .dropdown-panel {
             position: absolute; top: 70px; left: 60px;
@@ -90,7 +93,12 @@
 <div class="header">
     <button class="icon-btn" id="menuBtn"><span class="material-symbols-outlined">menu</span></button>
     <div class="tool-group" style="margin-left: 10px;">
-        <button class="icon-btn active" id="penBtn"><span class="material-symbols-outlined">edit</span></button>
+        <button class="icon-btn active" id="penBtn">
+            <span class="btn-label">
+                <span class="material-symbols-outlined">edit</span>
+                <span class="pen-caret">˅</span>
+            </span>
+        </button>
         <button class="icon-btn" id="eraserBtn"><span class="material-symbols-outlined">ink_eraser</span></button>
         <button class="icon-btn" id="lassoBtn"><span class="material-symbols-outlined">lasso_select</span></button>
         <button class="icon-btn" id="moveBtn"><span class="material-symbols-outlined">pan_tool</span></button>
@@ -98,6 +106,12 @@
     <div class="dropdown-panel" id="penSettings">
         <div class="setting-item"><label>色</label><input type="color" id="colorPicker" value="#555555"></div>
         <div class="setting-item"><label>太さ</label><input type="range" id="lineWidth" min="1" max="50" value="3"></div>
+        <div class="setting-item" style="justify-content: space-between;">
+            <span style="display:flex; align-items:center; gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:18px;">gesture</span> 線の平均化
+            </span>
+            <input type="checkbox" id="smoothToggle">
+        </div>
     </div>
     <div style="flex-grow: 1; text-align: center; font-weight: 600;" id="currentTitle">読み込み中...</div>
     <div class="tool-group">
@@ -113,12 +127,6 @@
     <div class="menu-item" id="btnNew"><span class="material-symbols-outlined">add_box</span> 新規作成</div>
     <div class="menu-item" id="btnRename"><span class="material-symbols-outlined">drive_file_rename_outline</span> 名前の変更</div>
     <div class="menu-item" id="toggleDarkMode"><span class="material-symbols-outlined">dark_mode</span> テーマ切替</div>
-    <div class="menu-item" style="justify-content: space-between;">
-        <span style="display:flex; align-items:center; gap:15px;">
-            <span class="material-symbols-outlined">gesture</span> 線の平均化
-        </span>
-        <input type="checkbox" id="smoothToggle">
-    </div>
     <hr style="width:100%; border:0; border-top:1px solid var(--border); margin:10px 0;">
     <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
     <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
@@ -139,7 +147,7 @@
 <div id="status">Zoom: 100%</div>
 <canvas id="canvas"></canvas>
 <input type="file" id="fileInput" accept="image/*" style="display:none">
-<input type="file" id="memomoFileInput" accept=".memomo,application/json" style="display:none">
+<input type="file" id="memomoFileInput" accept=".memomo,application/x-memomo,application/json" style="display:none">
 
 <script>
     // --- IndexedDB Logic ---
@@ -188,10 +196,11 @@
     let memos = [];
     let currentMemo = null;
     let camera = { x: 0, y: 0, zoom: 1 };
-    let mode = 'pen', isDrawing = false, isMoving = false, isLassoing = false, isDraggingSelection = false;
+    let mode = 'pen', isDrawing = false, isMoving = false, isLassoing = false, isDraggingSelection = false, isErasing = false;
     let lastPos = { x: 0, y: 0 }, lastDist = 0, currentLine = null, redoStack = [];
     let lassoPoints = [], selectedIndices = new Set();
     let smoothLines = localStorage.getItem('smoothLines') !== 'off';
+    let erasedSomething = false;
 
     async function init() {
         db = await dbOpen();
@@ -362,6 +371,18 @@
         }
     }
 
+    function eraseAt(worldPoint) {
+        let removed = false;
+        for (let i = currentMemo.elements.length - 1; i >= 0; i--) {
+            const el = currentMemo.elements[i];
+            if (el.type === 'path' && isPointOnElement(worldPoint, el)) {
+                currentMemo.elements.splice(i, 1);
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
     function smoothStroke(points) {
         if (!Array.isArray(points) || points.length < 4) return points;
         const smoothed = [points[0]];
@@ -416,13 +437,18 @@
                 isLassoing = true;
                 lassoPoints = [world];
             }
+        } else if (mode === 'eraser') {
+            isErasing = true;
+            redoStack = [];
+            selectedIndices.clear();
+            erasedSomething = eraseAt(toWorld(clientX, clientY));
         } else {
             isDrawing = true;
             redoStack = [];
             selectedIndices.clear();
             currentLine = {
                 type: 'path',
-                color: mode === 'eraser' ? (document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff') : document.getElementById('colorPicker').value,
+                color: document.getElementById('colorPicker').value,
                 width: document.getElementById('lineWidth').value / camera.zoom,
                 points: [toWorld(clientX, clientY)]
             };
@@ -456,6 +482,8 @@
             const world = toWorld(clientX, clientY);
             const last = lassoPoints[lassoPoints.length - 1];
             if (!last || Math.hypot(world.x - last.x, world.y - last.y) > 4 / camera.zoom) lassoPoints.push(world);
+        } else if (isErasing) {
+            erasedSomething = eraseAt(toWorld(clientX, clientY)) || erasedSomething;
         } else if (isDrawing) {
             currentLine.points.push(toWorld(clientX, clientY));
         }
@@ -467,6 +495,7 @@
             currentMemo.elements.push(currentLine);
             await commitSave();
         }
+        if (isErasing && erasedSomething) await commitSave();
         if (isDraggingSelection) await commitSave();
         if (isLassoing && lassoPoints.length > 2) {
             selectedIndices.clear();
@@ -482,7 +511,8 @@
                 }
             });
         }
-        isDrawing = isMoving = isLassoing = isDraggingSelection = false;
+        isDrawing = isMoving = isLassoing = isDraggingSelection = isErasing = false;
+        erasedSomething = false;
         currentLine = null;
         lassoPoints = [];
     }
@@ -567,7 +597,7 @@
             exportedAt: new Date().toISOString(),
             memos: await getAllMemos()
         };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/x-memomo' });
         const a = document.createElement('a');
         a.download = `memomo-export-${new Date().toISOString().slice(0, 10)}.memomo`;
         a.href = URL.createObjectURL(blob);
