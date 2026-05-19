@@ -112,6 +112,12 @@
             </span>
             <input type="checkbox" id="smoothToggle">
         </div>
+        <div class="setting-item" style="justify-content: space-between;">
+            <span style="display:flex; align-items:center; gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:18px;">reorder</span> 横線
+            </span>
+            <input type="checkbox" id="ruledToggle">
+        </div>
     </div>
     <div style="flex-grow: 1; text-align: center; font-weight: 600;" id="currentTitle">読み込み中...</div>
     <div class="tool-group">
@@ -128,8 +134,10 @@
     <div class="menu-item" id="btnRename"><span class="material-symbols-outlined">drive_file_rename_outline</span> 名前の変更</div>
     <div class="menu-item" id="toggleDarkMode"><span class="material-symbols-outlined">dark_mode</span> テーマ切替</div>
     <hr style="width:100%; border:0; border-top:1px solid var(--border); margin:10px 0;">
-    <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
-    <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
+    <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像/PDF インポート</div>
+    <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像/PDF 書き出し</div>
+    <div class="menu-item" id="btnPrint"><span class="material-symbols-outlined">print</span> 印刷</div>
+    <div class="menu-item" id="btnDriveSync"><span class="material-symbols-outlined">cloud_upload</span> Google Drive 連携</div>
     <div class="menu-item" id="btnExportMemomo"><span class="material-symbols-outlined">save</span> .memomo 書き出し</div>
     <div class="menu-item" id="btnImportMemomo"><span class="material-symbols-outlined">upload_file</span> .memomo 読み込み</div>
     <div class="menu-item" id="btnResetView"><span class="material-symbols-outlined">center_focus_strong</span> 表示をリセット</div>
@@ -139,14 +147,14 @@
 <div id="gallery-overlay">
     <div class="header">
         <button class="icon-btn" id="closeGallery"><span class="material-symbols-outlined">close</span></button>
-        <h2 style="font-size: 18px; margin-left: 15px;">ライブラリ</h2>
+        <h2 style="font-size: 18px; margin-left: 15px;">ライブラリ</h2><div style="margin-left:auto; display:flex; align-items:center; gap:8px;"><button class="icon-btn" id="prevPage"><span class="material-symbols-outlined">chevron_left</span></button><span id="pageInfo" style="font-size:13px; min-width:68px; text-align:center;">1 / 1</span><button class="icon-btn" id="nextPage"><span class="material-symbols-outlined">chevron_right</span></button></div>
     </div>
     <div class="gallery-grid" id="galleryGrid"></div>
 </div>
 
 <div id="status">Zoom: 100%</div>
 <canvas id="canvas"></canvas>
-<input type="file" id="fileInput" accept="image/*" style="display:none">
+<input type="file" id="fileInput" accept="image/*,application/pdf" style="display:none">
 <input type="file" id="memomoFileInput" accept=".memomo,application/x-memomo,application/json" style="display:none">
 
 <script>
@@ -200,7 +208,9 @@
     let lastPos = { x: 0, y: 0 }, lastDist = 0, currentLine = null, redoStack = [];
     let lassoPoints = [], selectedIndices = new Set();
     let smoothLines = localStorage.getItem('smoothLines') !== 'off';
+    let showRuled = localStorage.getItem('showRuled') === 'on';
     let erasedSomething = false;
+    let galleryPage = 1; const GALLERY_PAGE_SIZE = 12;
 
     async function init() {
         db = await dbOpen();
@@ -209,6 +219,7 @@
         
         if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
         document.getElementById('smoothToggle').checked = smoothLines;
+        document.getElementById('ruledToggle').checked = showRuled;
         
         memos = await getAllMemos();
         if (memos.length === 0) {
@@ -266,6 +277,7 @@
         ctx.save();
         ctx.translate(camera.x, camera.y);
         ctx.scale(camera.zoom, camera.zoom);
+        if (showRuled) drawRuledLines();
 
         currentMemo.elements.forEach(el => {
             if (el.type === 'path') drawPath(el);
@@ -290,6 +302,21 @@
         ctx.restore();
         document.getElementById('status').innerText = `Zoom: ${Math.round(camera.zoom * 100)}%`;
         requestAnimationFrame(render);
+    }
+
+    function drawRuledLines() {
+        const step = 40;
+        const left = (-camera.x / camera.zoom) - 100;
+        const right = ((canvas.width - camera.x) / camera.zoom) + 100;
+        const top = (-camera.y / camera.zoom) - 100;
+        const bottom = ((canvas.height - camera.y) / camera.zoom) + 100;
+        ctx.save();
+        ctx.strokeStyle = document.body.classList.contains('dark-mode') ? "rgba(255,255,255,0.08)" : "rgba(0,122,255,0.11)";
+        ctx.lineWidth = 1 / camera.zoom;
+        for (let y = Math.floor(top / step) * step; y < bottom; y += step) {
+            ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+        }
+        ctx.restore();
     }
 
     function drawPath(line) {
@@ -546,25 +573,39 @@
         smoothLines = e.target.checked;
         localStorage.setItem('smoothLines', smoothLines ? 'on' : 'off');
     };
+    document.getElementById('ruledToggle').onchange = (e) => {
+        showRuled = e.target.checked;
+        localStorage.setItem('showRuled', showRuled ? 'on' : 'off');
+    };
 
-    document.getElementById('btnGallery').onclick = async () => {
+    async function renderGalleryPage() {
         const grid = document.getElementById('galleryGrid'); grid.innerHTML = '';
-        memos = await getAllMemos();
-        memos.forEach(m => {
+        const totalPages = Math.max(1, Math.ceil(memos.length / GALLERY_PAGE_SIZE));
+        galleryPage = Math.min(totalPages, Math.max(1, galleryPage));
+        const slice = memos.slice((galleryPage - 1) * GALLERY_PAGE_SIZE, galleryPage * GALLERY_PAGE_SIZE);
+        document.getElementById('pageInfo').innerText = `${galleryPage} / ${totalPages}`;
+        slice.forEach(m => {
             const card = document.createElement('div'); card.className = 'gallery-card';
             card.innerHTML = `<div class="card-thumb"><img src="${m.thumb || ''}"></div><div class="card-info"><b>${m.title}</b><span class="material-symbols-outlined del-btn" style="color:red">delete</span></div>`;
             card.onclick = () => openMemo(m.id);
             card.querySelector('.del-btn').onclick = async (e) => {
                 e.stopPropagation(); if (confirm('消去？')) {
                     await deleteMemoFromDB(m.id); memos = await getAllMemos();
-                    if (memos.length === 0) await createNewMemo(); else await openMemo(memos[0].id);
-                    document.getElementById('btnGallery').click();
+                    if (memos.length === 0) await createNewMemo();
+                    await renderGalleryPage();
                 }
             };
             grid.appendChild(card);
         });
+    }
+    document.getElementById('btnGallery').onclick = async () => {
+        memos = await getAllMemos();
+        galleryPage = 1;
+        await renderGalleryPage();
         document.getElementById('gallery-overlay').style.display = 'flex';
     };
+    document.getElementById('prevPage').onclick = async () => { galleryPage--; await renderGalleryPage(); };
+    document.getElementById('nextPage').onclick = async () => { galleryPage++; await renderGalleryPage(); };
 
     document.getElementById('closeGallery').onclick = () => document.getElementById('gallery-overlay').style.display = 'none';
     document.getElementById('btnNew').onclick = createNewMemo;
@@ -572,15 +613,31 @@
     document.getElementById('btnRename').onclick = async () => {
         const n = prompt("名前変更", currentMemo.title); if (n) { currentMemo.title = n; document.getElementById('currentTitle').innerText = n; await commitSave(); } closeMenu();
     };
-    document.getElementById('btnExportImage').onclick = () => {
+    document.getElementById('btnExportImage').onclick = async () => {
         const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
         const tc = t.getContext('2d'); tc.fillStyle = document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff';
         tc.fillRect(0, 0, t.width, t.height); tc.drawImage(canvas, 0, 0);
-        const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
+        const out = prompt('書き出し形式を選択してください: png / pdf', 'png');
+        if ((out || '').toLowerCase() === 'pdf') {
+            const win = window.open('', '_blank');
+            win.document.write(`<img src='${t.toDataURL('image/png')}' style='width:100%'>`);
+            win.document.close();
+            win.focus();
+            win.print();
+        } else {
+            const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
+        }
     };
     document.getElementById('btnImportImage').onclick = () => document.getElementById('fileInput').click();
-    document.getElementById('fileInput').onchange = (e) => {
+    document.getElementById('fileInput').onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
+        if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+            alert('PDFは画像化せずに添付情報として取り込みます（先頭ページのプレビューはブラウザ依存）。');
+            currentMemo.elements.push({ type: 'pdf', name: f.name, size: f.size, importedAt: new Date().toISOString() });
+            await commitSave();
+            e.target.value = '';
+            return;
+        }
         const r = new FileReader(); r.onload = (ev) => {
             const img = new Image(); img.onload = async () => {
                 const w = toWorld(canvas.width / 2, canvas.height / 2);
@@ -588,6 +645,28 @@
                 await commitSave();
             }; img.src = ev.target.result;
         }; r.readAsDataURL(f);
+    };
+
+    document.getElementById('btnPrint').onclick = () => window.print();
+
+    document.getElementById('btnDriveSync').onclick = async () => {
+        const token = prompt('Google OAuth Access Tokenを入力してください（Drive file scope）');
+        if (!token) return;
+        const payload = { format: 'memomo-indexeddb-export', version: 1, exportedAt: new Date().toISOString(), memos: await getAllMemos() };
+        const boundary = 'memomoBoundary';
+        const metadata = { name: `memomo-backup-${new Date().toISOString().slice(0,10)}.memomo`, mimeType: 'application/x-memomo' };
+        const body = `--${boundary}
+Content-Type: application/json; charset=UTF-8
+
+${JSON.stringify(metadata)}
+--${boundary}
+Content-Type: application/x-memomo
+
+${JSON.stringify(payload)}
+--${boundary}--`;
+        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method:'POST', headers:{ Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+        if (res.ok) alert('Google Driveにバックアップしました');
+        else alert('Drive連携に失敗: ' + await res.text());
     };
 
     document.getElementById('btnExportMemomo').onclick = async () => {
