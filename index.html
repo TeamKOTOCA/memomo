@@ -32,7 +32,7 @@
             --border: rgba(255,255,255,0.1);
         }
 
-        body { font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; background: var(--bg); touch-action: none; color: var(--text); transition: background 0.3s; }
+        body { font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; background: var(--bg); touch-action: manipulation; color: var(--text); transition: background 0.3s; }
 
         /* --- UI Components --- */
         .header {
@@ -42,22 +42,22 @@
             box-shadow: 0 1px 0 var(--border); z-index: 100;
         }
         
-        .tool-group { display: flex; align-items: center; gap: 5px; background: rgba(120,120,128,0.1); padding: 4px; border-radius: 12px; }
+        .tool-group { display: flex; align-items: center; gap: 4px; background: transparent; padding: 0; border-radius: 0; }
         
         button.icon-btn {
-            background: none; border: none; padding: 8px; border-radius: 8px;
+            background: none; border: 1px solid transparent; padding: 8px; border-radius: 6px;
             cursor: pointer; color: var(--text); display: flex; align-items: center; transition: 0.2s;
         }
         button.icon-btn:hover { background: rgba(0,0,0,0.05); }
-        button.icon-btn.active { color: var(--primary); background: var(--panel); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        button.icon-btn.active { color: var(--primary); background: rgba(0,122,255,0.08); border-color: rgba(0,122,255,0.28); }
         .btn-label { display: inline-flex; align-items: center; gap: 2px; }
         .pen-caret { font-size: 16px; line-height: 1; opacity: 0; transform: translateY(1px); transition: opacity 0.2s; }
         #penBtn.active .pen-caret { opacity: 0.8; }
 
         .dropdown-panel {
             position: absolute; top: 70px; left: 60px;
-            background: var(--panel); border-radius: 12px; padding: 15px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            background: var(--panel); border-radius: 8px; padding: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
             display: none; flex-direction: column; gap: 10px; z-index: 150;
             border: 1px solid var(--border);
         }
@@ -65,26 +65,34 @@
         .setting-item { display: flex; align-items: center; gap: 10px; white-space: nowrap; font-size: 14px; }
 
         #menu-drawer {
-            position: fixed; top: 0; left: -300px; width: 280px; height: 100%;
+            position: fixed; top: 0; left: -300px; width: 280px; height: 100%; overflow-y: auto;
             background: var(--panel); z-index: 200; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             padding: 20px; box-sizing: border-box; display: flex; flex-direction: column;
         }
-        #menu-drawer.open { left: 0; box-shadow: 5px 0 20px rgba(0,0,0,0.2); }
-        .menu-item { display: flex; align-items: center; gap: 15px; padding: 15px; cursor: pointer; border-radius: 12px; margin-bottom: 5px; }
-        .menu-item:hover { background: rgba(120,120,128,0.1); }
+        #menu-drawer.open { left: 0; box-shadow: 2px 0 8px rgba(0,0,0,0.1); }
+        .menu-item { display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; border-radius: 6px; margin-bottom: 4px; border: 1px solid transparent; }
+        .menu-item:hover { background: rgba(120,120,128,0.08); border-color: var(--border); }
         .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; z-index: 150; }
 
         #gallery-overlay {
             position: fixed; inset: 0; background: var(--bg); z-index: 300; display: none; flex-direction: column;
         }
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 25px; overflow-y: auto;}
-        .gallery-card { background: var(--panel); border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; border: 1px solid var(--border); transition: 0.2s; }
-        .gallery-card:hover { transform: translateY(-3px); }
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 85px 16px 16px; overflow-y: auto; height: calc(100vh - 60px); box-sizing: border-box; touch-action: pan-y; }
+        .gallery-card { background: var(--panel); border-radius: 8px; overflow: hidden; box-shadow: none; cursor: pointer; border: 1px solid var(--border); transition: 0.15s; }
+        .gallery-card:hover { border-color: rgba(0,122,255,0.35); }
         .card-thumb { height: 120px; background: white; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); overflow: hidden; }
         .card-thumb img { width: 100%; height: 100%; object-fit: contain; }
         .card-info { padding: 12px; display: flex; justify-content: space-between; align-items: center; }
 
-        canvas { display: block; background: var(--canvas-bg); }
+        canvas { display: block; background: var(--canvas-bg); touch-action: none; }
+        .title-wrap { flex-grow: 1; display:flex; justify-content:center; align-items:center; gap:4px; min-width: 0; }
+        #currentTitle { font-weight:600; max-width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .page-mini { display:flex; align-items:center; gap:2px; background: rgba(120,120,128,0.08); border-radius: 6px; padding: 2px; border:1px solid var(--border); }
+        #canvasPageInfo { font-size:11px; opacity:0.7; min-width:40px; text-align:center; }
+        @media (max-width: 840px) {
+          #currentTitle { display:none; }
+          .tool-group { gap:2px; padding:2px; }
+        }
         #status { position: fixed; bottom: 15px; right: 20px; font-size: 11px; color: #aaa; pointer-events: none; }
     </style>
 </head>
@@ -112,8 +120,14 @@
             </span>
             <input type="checkbox" id="smoothToggle">
         </div>
+        <div class="setting-item" style="justify-content: space-between;">
+            <span style="display:flex; align-items:center; gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:18px;">reorder</span> 横線
+            </span>
+            <input type="checkbox" id="ruledToggle">
+        </div>
     </div>
-    <div style="flex-grow: 1; text-align: center; font-weight: 600;" id="currentTitle">読み込み中...</div>
+    <div class="title-wrap"><div id="currentTitle">読み込み中...</div><div class="page-mini"><button class="icon-btn" id="prevCanvasPage" title="前ページ"><span class="material-symbols-outlined">navigate_before</span></button><div id="canvasPageInfo">1/1</div><button class="icon-btn" id="nextCanvasPage" title="次ページ"><span class="material-symbols-outlined">navigate_next</span></button><button class="icon-btn" id="addCanvasPage" title="ページ追加"><span class="material-symbols-outlined">note_add</span></button><button class="icon-btn" id="deleteCanvasPage" title="ページ削除"><span class="material-symbols-outlined">delete</span></button></div></div>
     <div class="tool-group">
         <button class="icon-btn" id="undoBtn"><span class="material-symbols-outlined">undo</span></button>
         <button class="icon-btn" id="redoBtn"><span class="material-symbols-outlined">redo</span></button>
@@ -128,8 +142,10 @@
     <div class="menu-item" id="btnRename"><span class="material-symbols-outlined">drive_file_rename_outline</span> 名前の変更</div>
     <div class="menu-item" id="toggleDarkMode"><span class="material-symbols-outlined">dark_mode</span> テーマ切替</div>
     <hr style="width:100%; border:0; border-top:1px solid var(--border); margin:10px 0;">
-    <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像インポート</div>
-    <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像書き出し</div>
+    <div class="menu-item" id="btnImportImage"><span class="material-symbols-outlined">add_photo_alternate</span> 画像/PDF インポート</div>
+    <div class="menu-item" id="btnExportImage"><span class="material-symbols-outlined">ios_share</span> 画像/PDF 書き出し</div>
+    <div class="menu-item" id="btnPrint"><span class="material-symbols-outlined">print</span> 印刷</div>
+    <div class="menu-item" id="btnDriveSync"><span class="material-symbols-outlined">cloud_upload</span> Google Drive 連携</div>
     <div class="menu-item" id="btnExportMemomo"><span class="material-symbols-outlined">save</span> .memomo 書き出し</div>
     <div class="menu-item" id="btnImportMemomo"><span class="material-symbols-outlined">upload_file</span> .memomo 読み込み</div>
     <div class="menu-item" id="btnResetView"><span class="material-symbols-outlined">center_focus_strong</span> 表示をリセット</div>
@@ -139,14 +155,14 @@
 <div id="gallery-overlay">
     <div class="header">
         <button class="icon-btn" id="closeGallery"><span class="material-symbols-outlined">close</span></button>
-        <h2 style="font-size: 18px; margin-left: 15px;">ライブラリ</h2>
+        <h2 style="font-size: 18px; margin-left: 15px;">ライブラリ</h2><div style="margin-left:auto; display:flex; align-items:center; gap:8px;"><button class="icon-btn" id="prevPage"><span class="material-symbols-outlined">chevron_left</span></button><span id="pageInfo" style="font-size:13px; min-width:68px; text-align:center;">1 / 1</span><button class="icon-btn" id="nextPage"><span class="material-symbols-outlined">chevron_right</span></button></div>
     </div>
     <div class="gallery-grid" id="galleryGrid"></div>
 </div>
 
 <div id="status">Zoom: 100%</div>
 <canvas id="canvas"></canvas>
-<input type="file" id="fileInput" accept="image/*" style="display:none">
+<input type="file" id="fileInput" accept="image/*,application/pdf" style="display:none">
 <input type="file" id="memomoFileInput" accept=".memomo,application/x-memomo,application/json" style="display:none">
 
 <script>
@@ -200,7 +216,31 @@
     let lastPos = { x: 0, y: 0 }, lastDist = 0, currentLine = null, redoStack = [];
     let lassoPoints = [], selectedIndices = new Set();
     let smoothLines = localStorage.getItem('smoothLines') !== 'off';
+    let showRuled = localStorage.getItem('showRuled') === 'on';
     let erasedSomething = false;
+    let galleryPage = 1; const GALLERY_PAGE_SIZE = 12;
+    let currentPageIndex = 0;
+
+
+    function ensureMemoPages(memo) {
+        if (!Array.isArray(memo.pages) || memo.pages.length === 0) {
+            memo.pages = [{ elements: Array.isArray(memo.elements) ? memo.elements : [] }];
+        }
+        memo.pages.forEach(p => { if (!Array.isArray(p.elements)) p.elements = []; });
+        if (currentPageIndex >= memo.pages.length) currentPageIndex = memo.pages.length - 1;
+        if (currentPageIndex < 0) currentPageIndex = 0;
+    }
+
+    function currentElements() {
+        if (!currentMemo) return [];
+        ensureMemoPages(currentMemo);
+        return currentMemo.pages[currentPageIndex].elements;
+    }
+
+    function updatePageInfo() {
+        const total = currentMemo?.pages?.length || 1;
+        document.getElementById('canvasPageInfo').innerText = `${currentPageIndex + 1}/${total}`;
+    }
 
     async function init() {
         db = await dbOpen();
@@ -209,6 +249,7 @@
         
         if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
         document.getElementById('smoothToggle').checked = smoothLines;
+        document.getElementById('ruledToggle').checked = showRuled;
         
         memos = await getAllMemos();
         if (memos.length === 0) {
@@ -226,7 +267,7 @@
 
     async function createNewMemo() {
         const id = Date.now();
-        const newMemo = { id, title: "新規メモ", elements: [], thumb: "" };
+        const newMemo = { id, title: "新規メモ", pages:[{elements:[]}], thumb: "" };
         memos.push(newMemo);
         await saveMemo(newMemo);
         await openMemo(id);
@@ -234,7 +275,10 @@
 
     async function openMemo(id) {
         currentMemo = memos.find(m => m.id === id);
+        ensureMemoPages(currentMemo);
+        currentPageIndex = 0;
         document.getElementById('currentTitle').innerText = currentMemo.title;
+        updatePageInfo();
         camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 };
         redoStack = [];
         selectedIndices.clear();
@@ -266,14 +310,15 @@
         ctx.save();
         ctx.translate(camera.x, camera.y);
         ctx.scale(camera.zoom, camera.zoom);
+        if (showRuled) drawRuledLines();
 
-        currentMemo.elements.forEach(el => {
+        currentElements().forEach(el => {
             if (el.type === 'path') drawPath(el);
             else if (el.type === 'image') drawImage(el);
         });
         if (currentLine) drawPath(currentLine);
         selectedIndices.forEach(i => {
-            if (currentMemo.elements[i]) drawSelectionOutline(currentMemo.elements[i]);
+            if (currentElements()[i]) drawSelectionOutline(currentElements()[i]);
         });
         if (lassoPoints.length > 1) {
             ctx.save();
@@ -290,6 +335,21 @@
         ctx.restore();
         document.getElementById('status').innerText = `Zoom: ${Math.round(camera.zoom * 100)}%`;
         requestAnimationFrame(render);
+    }
+
+    function drawRuledLines() {
+        const step = 40;
+        const left = (-camera.x / camera.zoom) - 100;
+        const right = ((canvas.width - camera.x) / camera.zoom) + 100;
+        const top = (-camera.y / camera.zoom) - 100;
+        const bottom = ((canvas.height - camera.y) / camera.zoom) + 100;
+        ctx.save();
+        ctx.strokeStyle = document.body.classList.contains('dark-mode') ? "rgba(255,255,255,0.08)" : "rgba(0,122,255,0.11)";
+        ctx.lineWidth = 1 / camera.zoom;
+        for (let y = Math.floor(top / step) * step; y < bottom; y += step) {
+            ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+        }
+        ctx.restore();
     }
 
     function drawPath(line) {
@@ -373,10 +433,10 @@
 
     function eraseAt(worldPoint) {
         let removed = false;
-        for (let i = currentMemo.elements.length - 1; i >= 0; i--) {
-            const el = currentMemo.elements[i];
+        for (let i = currentElements().length - 1; i >= 0; i--) {
+            const el = currentElements()[i];
             if (el.type === 'path' && isPointOnElement(worldPoint, el)) {
-                currentMemo.elements.splice(i, 1);
+                currentElements().splice(i, 1);
                 removed = true;
             }
         }
@@ -430,7 +490,7 @@
         if (mode === 'move' || e.button === 1) isMoving = true;
         else if (mode === 'lasso') {
             const world = toWorld(clientX, clientY);
-            const hitSelected = [...selectedIndices].some(i => currentMemo.elements[i] && isPointOnElement(world, currentMemo.elements[i]));
+            const hitSelected = [...selectedIndices].some(i => currentElements()[i] && isPointOnElement(world, currentElements()[i]));
             if (selectedIndices.size > 0 && hitSelected) {
                 isDraggingSelection = true;
             } else {
@@ -476,7 +536,7 @@
             const next = toWorld(clientX, clientY);
             const dx = next.x - prev.x;
             const dy = next.y - prev.y;
-            selectedIndices.forEach(i => moveElement(currentMemo.elements[i], dx, dy));
+            selectedIndices.forEach(i => moveElement(currentElements()[i], dx, dy));
             lastPos = { x: clientX, y: clientY };
         } else if (isLassoing) {
             const world = toWorld(clientX, clientY);
@@ -492,14 +552,14 @@
     async function end() {
         if (isDrawing) {
             if (smoothLines && currentLine?.type === 'path') currentLine.points = smoothStroke(currentLine.points);
-            currentMemo.elements.push(currentLine);
+            currentElements().push(currentLine);
             await commitSave();
         }
         if (isErasing && erasedSomething) await commitSave();
         if (isDraggingSelection) await commitSave();
         if (isLassoing && lassoPoints.length > 2) {
             selectedIndices.clear();
-            currentMemo.elements.forEach((el, idx) => {
+            currentElements().forEach((el, idx) => {
                 if (el.type === 'path' && el.points.some(p => pointInPolygon(p, lassoPoints))) selectedIndices.add(idx);
                 else if (el.type === 'image') {
                     const corners = [
@@ -535,8 +595,8 @@
         document.getElementById('penSettings').classList.remove('open');
     }
 
-    document.getElementById('undoBtn').onclick = async () => { if (currentMemo.elements.length > 0) { redoStack.push(currentMemo.elements.pop()); await commitSave(); } };
-    document.getElementById('redoBtn').onclick = async () => { if (redoStack.length > 0) { currentMemo.elements.push(redoStack.pop()); await commitSave(); } };
+    document.getElementById('undoBtn').onclick = async () => { if (currentElements().length > 0) { redoStack.push(currentElements().pop()); await commitSave(); } };
+    document.getElementById('redoBtn').onclick = async () => { if (redoStack.length > 0) { currentElements().push(redoStack.pop()); await commitSave(); } };
 
     document.getElementById('toggleDarkMode').onclick = () => {
         const isDark = document.body.classList.toggle('dark-mode');
@@ -546,48 +606,136 @@
         smoothLines = e.target.checked;
         localStorage.setItem('smoothLines', smoothLines ? 'on' : 'off');
     };
+    document.getElementById('ruledToggle').onchange = (e) => {
+        showRuled = e.target.checked;
+        localStorage.setItem('showRuled', showRuled ? 'on' : 'off');
+    };
 
-    document.getElementById('btnGallery').onclick = async () => {
+    async function renderGalleryPage() {
         const grid = document.getElementById('galleryGrid'); grid.innerHTML = '';
-        memos = await getAllMemos();
-        memos.forEach(m => {
+        const totalPages = Math.max(1, Math.ceil(memos.length / GALLERY_PAGE_SIZE));
+        galleryPage = Math.min(totalPages, Math.max(1, galleryPage));
+        const slice = memos.slice((galleryPage - 1) * GALLERY_PAGE_SIZE, galleryPage * GALLERY_PAGE_SIZE);
+        document.getElementById('pageInfo').innerText = `${galleryPage} / ${totalPages}`;
+        slice.forEach(m => {
             const card = document.createElement('div'); card.className = 'gallery-card';
             card.innerHTML = `<div class="card-thumb"><img src="${m.thumb || ''}"></div><div class="card-info"><b>${m.title}</b><span class="material-symbols-outlined del-btn" style="color:red">delete</span></div>`;
             card.onclick = () => openMemo(m.id);
             card.querySelector('.del-btn').onclick = async (e) => {
                 e.stopPropagation(); if (confirm('消去？')) {
                     await deleteMemoFromDB(m.id); memos = await getAllMemos();
-                    if (memos.length === 0) await createNewMemo(); else await openMemo(memos[0].id);
-                    document.getElementById('btnGallery').click();
+                    if (memos.length === 0) await createNewMemo();
+                    await renderGalleryPage();
                 }
             };
             grid.appendChild(card);
         });
+    }
+    document.getElementById('btnGallery').onclick = async () => {
+        memos = await getAllMemos();
+        galleryPage = 1;
+        await renderGalleryPage();
         document.getElementById('gallery-overlay').style.display = 'flex';
     };
+    document.getElementById('prevPage').onclick = async () => { galleryPage--; await renderGalleryPage(); };
+    document.getElementById('nextPage').onclick = async () => { galleryPage++; await renderGalleryPage(); };
 
     document.getElementById('closeGallery').onclick = () => document.getElementById('gallery-overlay').style.display = 'none';
+    document.getElementById('prevCanvasPage').onclick = () => { if (!currentMemo) return; if (currentPageIndex > 0) { currentPageIndex--; redoStack=[]; selectedIndices.clear(); updatePageInfo(); } };
+    document.getElementById('nextCanvasPage').onclick = () => { if (!currentMemo) return; ensureMemoPages(currentMemo); if (currentPageIndex < currentMemo.pages.length - 1) { currentPageIndex++; redoStack=[]; selectedIndices.clear(); updatePageInfo(); } };
+    document.getElementById('addCanvasPage').onclick = async () => { if (!currentMemo) return; ensureMemoPages(currentMemo); currentMemo.pages.push({ elements: [] }); currentPageIndex = currentMemo.pages.length - 1; updatePageInfo(); await commitSave(); };
+    document.getElementById('deleteCanvasPage').onclick = async () => {
+        if (!currentMemo) return;
+        ensureMemoPages(currentMemo);
+        if (currentMemo.pages.length <= 1) {
+            if (!confirm('最後の1ページは削除できません。内容を消去しますか？')) return;
+            currentMemo.pages[0].elements = [];
+            redoStack = [];
+            selectedIndices.clear();
+            await commitSave();
+            return;
+        }
+        if (!confirm(`ページ ${currentPageIndex + 1} を削除しますか？`)) return;
+        currentMemo.pages.splice(currentPageIndex, 1);
+        if (currentPageIndex >= currentMemo.pages.length) currentPageIndex = currentMemo.pages.length - 1;
+        redoStack = [];
+        selectedIndices.clear();
+        updatePageInfo();
+        await commitSave();
+    };
     document.getElementById('btnNew').onclick = createNewMemo;
     document.getElementById('btnResetView').onclick = () => { camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 }; closeMenu(); };
     document.getElementById('btnRename').onclick = async () => {
         const n = prompt("名前変更", currentMemo.title); if (n) { currentMemo.title = n; document.getElementById('currentTitle').innerText = n; await commitSave(); } closeMenu();
     };
-    document.getElementById('btnExportImage').onclick = () => {
+    document.getElementById('btnExportImage').onclick = async () => { closeMenu();
         const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
         const tc = t.getContext('2d'); tc.fillStyle = document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff';
         tc.fillRect(0, 0, t.width, t.height); tc.drawImage(canvas, 0, 0);
-        const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
+        const out = prompt('書き出し形式を選択してください: png / pdf', 'png');
+        if ((out || '').toLowerCase() === 'pdf') {
+            const win = window.open('', '_blank');
+            win.document.write(`<img src='${t.toDataURL('image/png')}' style='width:100%'>`);
+            win.document.close();
+            win.focus();
+            win.print();
+        } else {
+            const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
+        }
     };
-    document.getElementById('btnImportImage').onclick = () => document.getElementById('fileInput').click();
-    document.getElementById('fileInput').onchange = (e) => {
+    document.getElementById('btnImportImage').onclick = () => { closeMenu(); document.getElementById('fileInput').click(); };
+    document.getElementById('fileInput').onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
+        if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+            const arrayBuffer = await f.arrayBuffer();
+            const pdfjs = window.pdfjsLib || (await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.min.mjs'));
+            pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.worker.min.mjs';
+            const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+            for (let p = 1; p <= pdf.numPages; p++) {
+                const page = await pdf.getPage(p);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const pc = document.createElement('canvas');
+                pc.width = viewport.width; pc.height = viewport.height;
+                await page.render({ canvasContext: pc.getContext('2d'), viewport }).promise;
+                if (p > 1) currentMemo.pages.push({ elements: [] });
+                currentPageIndex = currentMemo.pages.length - 1;
+                const w = toWorld(canvas.width / 2, canvas.height / 2);
+                currentElements().push({ type: 'image', data: pc.toDataURL('image/png'), x: w.x - (pc.width / 2 / camera.zoom), y: w.y - (pc.height / 2 / camera.zoom), w: pc.width / camera.zoom, h: pc.height / camera.zoom });
+            }
+            updatePageInfo();
+            await commitSave();
+            e.target.value = '';
+            return;
+        }
         const r = new FileReader(); r.onload = (ev) => {
             const img = new Image(); img.onload = async () => {
                 const w = toWorld(canvas.width / 2, canvas.height / 2);
-                currentMemo.elements.push({ type: 'image', data: ev.target.result, x: w.x - (img.width / 2 / camera.zoom), y: w.y - (img.height / 2 / camera.zoom), w: img.width / camera.zoom, h: img.height / camera.zoom });
+                currentElements().push({ type: 'image', data: ev.target.result, x: w.x - (img.width / 2 / camera.zoom), y: w.y - (img.height / 2 / camera.zoom), w: img.width / camera.zoom, h: img.height / camera.zoom });
                 await commitSave();
             }; img.src = ev.target.result;
         }; r.readAsDataURL(f);
+    };
+
+    document.getElementById('btnPrint').onclick = () => { closeMenu(); window.print(); };
+
+    document.getElementById('btnDriveSync').onclick = async () => {
+        const token = prompt('Google OAuth Access Tokenを入力してください（Drive file scope）');
+        if (!token) return;
+        const payload = { format: 'memomo-indexeddb-export', version: 1, exportedAt: new Date().toISOString(), memos: await getAllMemos() };
+        const boundary = 'memomoBoundary';
+        const metadata = { name: `memomo-backup-${new Date().toISOString().slice(0,10)}.memomo`, mimeType: 'application/x-memomo' };
+        const body = `--${boundary}
+Content-Type: application/json; charset=UTF-8
+
+${JSON.stringify(metadata)}
+--${boundary}
+Content-Type: application/x-memomo
+
+${JSON.stringify(payload)}
+--${boundary}--`;
+        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method:'POST', headers:{ Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+        if (res.ok) alert('Google Driveにバックアップしました');
+        else alert('Drive連携に失敗: ' + await res.text());
     };
 
     document.getElementById('btnExportMemomo').onclick = async () => {
