@@ -32,7 +32,7 @@
             --border: rgba(255,255,255,0.1);
         }
 
-        body { font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; background: var(--bg); touch-action: none; color: var(--text); transition: background 0.3s; }
+        body { font-family: -apple-system, sans-serif; margin: 0; overflow: hidden; background: var(--bg); touch-action: manipulation; color: var(--text); transition: background 0.3s; }
 
         /* --- UI Components --- */
         .header {
@@ -65,7 +65,7 @@
         .setting-item { display: flex; align-items: center; gap: 10px; white-space: nowrap; font-size: 14px; }
 
         #menu-drawer {
-            position: fixed; top: 0; left: -300px; width: 280px; height: 100%;
+            position: fixed; top: 0; left: -300px; width: 280px; height: 100%; overflow-y: auto;
             background: var(--panel); z-index: 200; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             padding: 20px; box-sizing: border-box; display: flex; flex-direction: column;
         }
@@ -77,14 +77,22 @@
         #gallery-overlay {
             position: fixed; inset: 0; background: var(--bg); z-index: 300; display: none; flex-direction: column;
         }
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 25px; overflow-y: auto;}
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; padding: 85px 16px 16px; overflow-y: auto; height: calc(100vh - 60px); box-sizing: border-box; touch-action: pan-y; }
         .gallery-card { background: var(--panel); border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; border: 1px solid var(--border); transition: 0.2s; }
         .gallery-card:hover { transform: translateY(-3px); }
         .card-thumb { height: 120px; background: white; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); overflow: hidden; }
         .card-thumb img { width: 100%; height: 100%; object-fit: contain; }
         .card-info { padding: 12px; display: flex; justify-content: space-between; align-items: center; }
 
-        canvas { display: block; background: var(--canvas-bg); }
+        canvas { display: block; background: var(--canvas-bg); touch-action: none; }
+        .title-wrap { flex-grow: 1; display:flex; justify-content:center; align-items:center; gap:4px; min-width: 0; }
+        #currentTitle { font-weight:600; max-width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .page-mini { display:flex; align-items:center; gap:2px; background: rgba(120,120,128,0.12); border-radius: 10px; padding: 2px; }
+        #canvasPageInfo { font-size:11px; opacity:0.7; min-width:40px; text-align:center; }
+        @media (max-width: 840px) {
+          #currentTitle { display:none; }
+          .tool-group { gap:2px; padding:2px; }
+        }
         #status { position: fixed; bottom: 15px; right: 20px; font-size: 11px; color: #aaa; pointer-events: none; }
     </style>
 </head>
@@ -119,7 +127,7 @@
             <input type="checkbox" id="ruledToggle">
         </div>
     </div>
-    <div style="flex-grow: 1; display:flex; justify-content:center; align-items:center; gap:8px;"><button class="icon-btn" id="prevCanvasPage"><span class="material-symbols-outlined">navigate_before</span></button><div style="font-weight:600;" id="currentTitle">読み込み中...</div><div id="canvasPageInfo" style="font-size:12px; opacity:0.7; min-width:48px; text-align:center;">1/1</div><button class="icon-btn" id="nextCanvasPage"><span class="material-symbols-outlined">navigate_next</span></button><button class="icon-btn" id="addCanvasPage"><span class="material-symbols-outlined">note_add</span></button></div>
+    <div class="title-wrap"><div id="currentTitle">読み込み中...</div><div class="page-mini"><button class="icon-btn" id="prevCanvasPage" title="前ページ"><span class="material-symbols-outlined">navigate_before</span></button><div id="canvasPageInfo">1/1</div><button class="icon-btn" id="nextCanvasPage" title="次ページ"><span class="material-symbols-outlined">navigate_next</span></button><button class="icon-btn" id="addCanvasPage" title="ページ追加"><span class="material-symbols-outlined">note_add</span></button></div></div>
     <div class="tool-group">
         <button class="icon-btn" id="undoBtn"><span class="material-symbols-outlined">undo</span></button>
         <button class="icon-btn" id="redoBtn"><span class="material-symbols-outlined">redo</span></button>
@@ -641,7 +649,7 @@
     document.getElementById('btnRename').onclick = async () => {
         const n = prompt("名前変更", currentMemo.title); if (n) { currentMemo.title = n; document.getElementById('currentTitle').innerText = n; await commitSave(); } closeMenu();
     };
-    document.getElementById('btnExportImage').onclick = async () => {
+    document.getElementById('btnExportImage').onclick = async () => { closeMenu();
         const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
         const tc = t.getContext('2d'); tc.fillStyle = document.body.classList.contains('dark-mode') ? '#121212' : '#ffffff';
         tc.fillRect(0, 0, t.width, t.height); tc.drawImage(canvas, 0, 0);
@@ -656,7 +664,7 @@
             const a = document.createElement('a'); a.download = 'memo.png'; a.href = t.toDataURL(); a.click();
         }
     };
-    document.getElementById('btnImportImage').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('btnImportImage').onclick = () => { closeMenu(); document.getElementById('fileInput').click(); };
     document.getElementById('fileInput').onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
         if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
@@ -689,7 +697,7 @@
         }; r.readAsDataURL(f);
     };
 
-    document.getElementById('btnPrint').onclick = () => window.print();
+    document.getElementById('btnPrint').onclick = () => { closeMenu(); window.print(); };
 
     document.getElementById('btnDriveSync').onclick = async () => {
         const token = prompt('Google OAuth Access Tokenを入力してください（Drive file scope）');
