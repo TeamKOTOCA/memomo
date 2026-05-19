@@ -119,7 +119,7 @@
             <input type="checkbox" id="ruledToggle">
         </div>
     </div>
-    <div style="flex-grow: 1; text-align: center; font-weight: 600;" id="currentTitle">読み込み中...</div>
+    <div style="flex-grow: 1; display:flex; justify-content:center; align-items:center; gap:8px;"><button class="icon-btn" id="prevCanvasPage"><span class="material-symbols-outlined">navigate_before</span></button><div style="font-weight:600;" id="currentTitle">読み込み中...</div><div id="canvasPageInfo" style="font-size:12px; opacity:0.7; min-width:48px; text-align:center;">1/1</div><button class="icon-btn" id="nextCanvasPage"><span class="material-symbols-outlined">navigate_next</span></button><button class="icon-btn" id="addCanvasPage"><span class="material-symbols-outlined">note_add</span></button></div>
     <div class="tool-group">
         <button class="icon-btn" id="undoBtn"><span class="material-symbols-outlined">undo</span></button>
         <button class="icon-btn" id="redoBtn"><span class="material-symbols-outlined">redo</span></button>
@@ -211,6 +211,28 @@
     let showRuled = localStorage.getItem('showRuled') === 'on';
     let erasedSomething = false;
     let galleryPage = 1; const GALLERY_PAGE_SIZE = 12;
+    let currentPageIndex = 0;
+
+
+    function ensureMemoPages(memo) {
+        if (!Array.isArray(memo.pages) || memo.pages.length === 0) {
+            memo.pages = [{ elements: Array.isArray(memo.elements) ? memo.elements : [] }];
+        }
+        memo.pages.forEach(p => { if (!Array.isArray(p.elements)) p.elements = []; });
+        if (currentPageIndex >= memo.pages.length) currentPageIndex = memo.pages.length - 1;
+        if (currentPageIndex < 0) currentPageIndex = 0;
+    }
+
+    function currentElements() {
+        if (!currentMemo) return [];
+        ensureMemoPages(currentMemo);
+        return currentMemo.pages[currentPageIndex].elements;
+    }
+
+    function updatePageInfo() {
+        const total = currentMemo?.pages?.length || 1;
+        document.getElementById('canvasPageInfo').innerText = `${currentPageIndex + 1}/${total}`;
+    }
 
     async function init() {
         db = await dbOpen();
@@ -237,7 +259,7 @@
 
     async function createNewMemo() {
         const id = Date.now();
-        const newMemo = { id, title: "新規メモ", elements: [], thumb: "" };
+        const newMemo = { id, title: "新規メモ", pages:[{elements:[]}], thumb: "" };
         memos.push(newMemo);
         await saveMemo(newMemo);
         await openMemo(id);
@@ -245,7 +267,10 @@
 
     async function openMemo(id) {
         currentMemo = memos.find(m => m.id === id);
+        ensureMemoPages(currentMemo);
+        currentPageIndex = 0;
         document.getElementById('currentTitle').innerText = currentMemo.title;
+        updatePageInfo();
         camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 };
         redoStack = [];
         selectedIndices.clear();
@@ -279,13 +304,13 @@
         ctx.scale(camera.zoom, camera.zoom);
         if (showRuled) drawRuledLines();
 
-        currentMemo.elements.forEach(el => {
+        currentElements().forEach(el => {
             if (el.type === 'path') drawPath(el);
             else if (el.type === 'image') drawImage(el);
         });
         if (currentLine) drawPath(currentLine);
         selectedIndices.forEach(i => {
-            if (currentMemo.elements[i]) drawSelectionOutline(currentMemo.elements[i]);
+            if (currentElements()[i]) drawSelectionOutline(currentElements()[i]);
         });
         if (lassoPoints.length > 1) {
             ctx.save();
@@ -400,10 +425,10 @@
 
     function eraseAt(worldPoint) {
         let removed = false;
-        for (let i = currentMemo.elements.length - 1; i >= 0; i--) {
-            const el = currentMemo.elements[i];
+        for (let i = currentElements().length - 1; i >= 0; i--) {
+            const el = currentElements()[i];
             if (el.type === 'path' && isPointOnElement(worldPoint, el)) {
-                currentMemo.elements.splice(i, 1);
+                currentElements().splice(i, 1);
                 removed = true;
             }
         }
@@ -457,7 +482,7 @@
         if (mode === 'move' || e.button === 1) isMoving = true;
         else if (mode === 'lasso') {
             const world = toWorld(clientX, clientY);
-            const hitSelected = [...selectedIndices].some(i => currentMemo.elements[i] && isPointOnElement(world, currentMemo.elements[i]));
+            const hitSelected = [...selectedIndices].some(i => currentElements()[i] && isPointOnElement(world, currentElements()[i]));
             if (selectedIndices.size > 0 && hitSelected) {
                 isDraggingSelection = true;
             } else {
@@ -503,7 +528,7 @@
             const next = toWorld(clientX, clientY);
             const dx = next.x - prev.x;
             const dy = next.y - prev.y;
-            selectedIndices.forEach(i => moveElement(currentMemo.elements[i], dx, dy));
+            selectedIndices.forEach(i => moveElement(currentElements()[i], dx, dy));
             lastPos = { x: clientX, y: clientY };
         } else if (isLassoing) {
             const world = toWorld(clientX, clientY);
@@ -519,14 +544,14 @@
     async function end() {
         if (isDrawing) {
             if (smoothLines && currentLine?.type === 'path') currentLine.points = smoothStroke(currentLine.points);
-            currentMemo.elements.push(currentLine);
+            currentElements().push(currentLine);
             await commitSave();
         }
         if (isErasing && erasedSomething) await commitSave();
         if (isDraggingSelection) await commitSave();
         if (isLassoing && lassoPoints.length > 2) {
             selectedIndices.clear();
-            currentMemo.elements.forEach((el, idx) => {
+            currentElements().forEach((el, idx) => {
                 if (el.type === 'path' && el.points.some(p => pointInPolygon(p, lassoPoints))) selectedIndices.add(idx);
                 else if (el.type === 'image') {
                     const corners = [
@@ -562,8 +587,8 @@
         document.getElementById('penSettings').classList.remove('open');
     }
 
-    document.getElementById('undoBtn').onclick = async () => { if (currentMemo.elements.length > 0) { redoStack.push(currentMemo.elements.pop()); await commitSave(); } };
-    document.getElementById('redoBtn').onclick = async () => { if (redoStack.length > 0) { currentMemo.elements.push(redoStack.pop()); await commitSave(); } };
+    document.getElementById('undoBtn').onclick = async () => { if (currentElements().length > 0) { redoStack.push(currentElements().pop()); await commitSave(); } };
+    document.getElementById('redoBtn').onclick = async () => { if (redoStack.length > 0) { currentElements().push(redoStack.pop()); await commitSave(); } };
 
     document.getElementById('toggleDarkMode').onclick = () => {
         const isDark = document.body.classList.toggle('dark-mode');
@@ -608,6 +633,9 @@
     document.getElementById('nextPage').onclick = async () => { galleryPage++; await renderGalleryPage(); };
 
     document.getElementById('closeGallery').onclick = () => document.getElementById('gallery-overlay').style.display = 'none';
+    document.getElementById('prevCanvasPage').onclick = () => { if (!currentMemo) return; if (currentPageIndex > 0) { currentPageIndex--; redoStack=[]; selectedIndices.clear(); updatePageInfo(); } };
+    document.getElementById('nextCanvasPage').onclick = () => { if (!currentMemo) return; ensureMemoPages(currentMemo); if (currentPageIndex < currentMemo.pages.length - 1) { currentPageIndex++; redoStack=[]; selectedIndices.clear(); updatePageInfo(); } };
+    document.getElementById('addCanvasPage').onclick = async () => { if (!currentMemo) return; ensureMemoPages(currentMemo); currentMemo.pages.push({ elements: [] }); currentPageIndex = currentMemo.pages.length - 1; updatePageInfo(); await commitSave(); };
     document.getElementById('btnNew').onclick = createNewMemo;
     document.getElementById('btnResetView').onclick = () => { camera = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 }; closeMenu(); };
     document.getElementById('btnRename').onclick = async () => {
@@ -632,8 +660,22 @@
     document.getElementById('fileInput').onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
         if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
-            alert('PDFは画像化せずに添付情報として取り込みます（先頭ページのプレビューはブラウザ依存）。');
-            currentMemo.elements.push({ type: 'pdf', name: f.name, size: f.size, importedAt: new Date().toISOString() });
+            const arrayBuffer = await f.arrayBuffer();
+            const pdfjs = window.pdfjsLib || (await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.min.mjs'));
+            pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.5.136/build/pdf.worker.min.mjs';
+            const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+            for (let p = 1; p <= pdf.numPages; p++) {
+                const page = await pdf.getPage(p);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const pc = document.createElement('canvas');
+                pc.width = viewport.width; pc.height = viewport.height;
+                await page.render({ canvasContext: pc.getContext('2d'), viewport }).promise;
+                if (p > 1) currentMemo.pages.push({ elements: [] });
+                currentPageIndex = currentMemo.pages.length - 1;
+                const w = toWorld(canvas.width / 2, canvas.height / 2);
+                currentElements().push({ type: 'image', data: pc.toDataURL('image/png'), x: w.x - (pc.width / 2 / camera.zoom), y: w.y - (pc.height / 2 / camera.zoom), w: pc.width / camera.zoom, h: pc.height / camera.zoom });
+            }
+            updatePageInfo();
             await commitSave();
             e.target.value = '';
             return;
@@ -641,7 +683,7 @@
         const r = new FileReader(); r.onload = (ev) => {
             const img = new Image(); img.onload = async () => {
                 const w = toWorld(canvas.width / 2, canvas.height / 2);
-                currentMemo.elements.push({ type: 'image', data: ev.target.result, x: w.x - (img.width / 2 / camera.zoom), y: w.y - (img.height / 2 / camera.zoom), w: img.width / camera.zoom, h: img.height / camera.zoom });
+                currentElements().push({ type: 'image', data: ev.target.result, x: w.x - (img.width / 2 / camera.zoom), y: w.y - (img.height / 2 / camera.zoom), w: img.width / camera.zoom, h: img.height / camera.zoom });
                 await commitSave();
             }; img.src = ev.target.result;
         }; r.readAsDataURL(f);
